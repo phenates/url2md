@@ -290,6 +290,7 @@ def scrape_to_markdown(url, output_dir='.'):
         # Ajouter frontmatter YAML
         frontmatter = f"""---
 title: {title}
+created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 source: {url}
 scraped: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 ---
@@ -329,7 +330,7 @@ def main():
         sys.exit(1)
 
     url = sys.argv[1]
-    output_dir = sys.argv[2] if len(sys.argv) > 2 else '.'
+    output_dir = sys.argv[2] if len(sys.argv) > 2 else './output'
 
     # Valider l'URL
     parsed = urlparse(url)
