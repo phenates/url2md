@@ -225,7 +225,8 @@ def clean_markdown_output(markdown_text):
 def remove_first_h1(markdown_text):
     """Supprime le premier titre H1 du document."""
     # Supprimer le premier H1 (une seule fois)
-    markdown_text = re.sub(r'^#\s+.+$', '', markdown_text, count=1, flags=re.MULTILINE)
+    markdown_text = re.sub(r'^#\s+.+$', '', markdown_text,
+                           count=1, flags=re.MULTILINE)
     # Nettoyer les lignes vides au début
     markdown_text = markdown_text.lstrip('\n')
     return markdown_text
