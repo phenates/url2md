@@ -724,6 +724,64 @@ def process_multiple_urls(urls, output_dir, delay=1.0, continue_on_error=True):
     return stats
 
 
+def discover_urls_by_path(start_url, max_depth=1, max_urls=0):
+    """
+    Discovers all URLs under the same path without scraping (lightweight crawl).
+
+    Args:
+        start_url (str): Starting URL (defines base path)
+        max_depth (int): Maximum crawl depth (0 = unlimited, default: 1)
+        max_urls (int): Max URLs to discover (0 = unlimited, default: 0)
+
+    Returns:
+        list: List of discovered URLs
+
+    Example:
+        >>> urls = discover_urls_by_path("https://example.com/blog/", max_depth=1)
+        >>> print(f"Found {len(urls)} URLs")
+    """
+    queue = URLQueue(start_url, max_depth)
+    queue.add(start_url, depth=0)
+    discovered = []
+
+    print(f"\n{'='*60}")
+    print("🔍 DISCOVERING...")
+    print(f"{'='*60}")
+    print(f"\n Discovering URLs (crawling without scraping)...")
+
+    while not queue.is_empty():
+        # URL limit check
+        if max_urls > 0 and len(discovered) >= max_urls:
+            break
+
+        url, depth = queue.get_next()
+        discovered.append(url)
+
+        try:
+            # Only fetch and parse HTML (no markdown conversion)
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            response.encoding = 'utf-8'
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            # Extract links for next level
+            if max_depth == 0 or depth < max_depth:
+                links = extract_links(soup, url)
+                for link in links:
+                    queue.add(link, depth + 1)
+
+            # Progress indicator
+            print(
+                f"   [{len(discovered)}] URLs discovered (Queue: {queue.size()})...", end='\r')
+
+        except Exception as e:
+            # Silently skip failed URLs during discovery
+            pass
+
+    print(f"\n✅ Discovery complete: {len(discovered)} URLs found\n")
+    return discovered
+
+
 def crawl_by_path(start_url, output_dir, max_depth=1, delay=1.0, max_urls=0):
     """
     Crawls all pages under the same path as start_url.
@@ -905,6 +963,51 @@ source: {url}
 # ============================================================
 # CLI & ENTRY POINT
 # ============================================================
+def confirm_processing(mode, url_count, output_dir, auto_yes=False):
+    """
+    Displays processing summary and asks for user confirmation.
+
+    Args:
+        mode (str): Processing mode ('batch', 'crawl', 'sitemap')
+        url_count (int): Number of URLs to process
+        output_dir (str): Output directory path
+        auto_yes (bool): Skip confirmation if True (default: False)
+
+    Returns:
+        bool: True if user confirms, False otherwise
+    """
+    print(f"\n{'='*60}")
+    print("📋 PROCESSING SUMMARY")
+    print(f"{'='*60}")
+
+    if mode == 'crawl':
+        print(f"Mode:            Path-based crawling")
+        print(f"URLs discovered: {url_count}")
+    else:
+        print(
+            f"Mode:            {'Sitemap' if mode == 'sitemap' else 'Batch'} processing")
+        print(f"URLs to process: {url_count}")
+
+    print(f"Output dir:      {output_dir}")
+    print(f"{'='*60}\n")
+
+    if auto_yes:
+        print("✅ Auto-confirmed (--yes flag)")
+        return True
+
+    try:
+        response = input("❓ Do you want to proceed? [Y/n]: ").strip().lower()
+        if response in ('', 'y', 'yes', 'o', 'oui'):
+            print("✅ Processing confirmed\n")
+            return True
+        else:
+            print("❌ Processing cancelled by user")
+            return False
+    except (KeyboardInterrupt, EOFError):
+        print("\n❌ Processing cancelled by user")
+        return False
+
+
 def parse_arguments():
     """
     Parses command-line arguments.
@@ -937,6 +1040,9 @@ Examples:
 
   # From text file
   python url2md.py --file urls.txt ./output
+
+  # Skip confirmation prompt (for automation)
+  python url2md.py --yes --crawl https://example.com/blog/ ./output
         """
     )
 
@@ -968,6 +1074,8 @@ Examples:
                         help='Maximum number of URLs to process (0=unlimited)')
     parser.add_argument('--continue-on-error', action='store_true', default=True,
                         help='Continue scraping even if some URLs fail')
+    parser.add_argument('-y', '--yes', action='store_true',
+                        help='Skip confirmation prompt and proceed automatically')
 
     return parser.parse_args()
 
@@ -980,8 +1088,9 @@ def main():
     1. Parse command-line arguments
     2. Collect URLs from various sources (file, sitemap, CLI args)
     3. Validate URLs
-    4. Execute scraping (batch or crawl mode)
-    5. Display final statistics
+    4. Display processing summary and request user confirmation
+    5. Execute scraping (batch or crawl mode)
+    6. Display final statistics
     """
     args = parse_arguments()
 
@@ -1026,25 +1135,54 @@ def main():
             print("URL must start with http:// or https://")
             sys.exit(1)
 
-    # Execute based on mode
-    try:
-        if args.crawl:
-            # Crawling mode: uses only first URL as starting point
-            stats = crawl_by_path(
+    # Show summary and ask for confirmation
+    if args.crawl:
+        # Crawling mode: discover URLs first to get exact count
+        try:
+            discovered_urls = discover_urls_by_path(
                 urls[0],
-                args.output_dir,
                 args.max_depth,
-                args.delay,
                 args.max_urls
             )
-        else:
-            # Batch mode: processes all URLs
-            stats = process_multiple_urls(
-                urls,
-                args.output_dir,
-                args.delay,
-                args.continue_on_error
+
+            # Show exact count after discovery
+            confirmed = confirm_processing(
+                mode='crawl',
+                url_count=len(discovered_urls),
+                output_dir=args.output_dir,
+                auto_yes=args.yes
             )
+
+            # Replace URL list with discovered URLs for processing
+            if confirmed:
+                urls = discovered_urls
+        except Exception as e:
+            print(f"❌ Discovery failed: {e}")
+            sys.exit(1)
+    else:
+        # Batch/sitemap mode: show exact count
+        mode = 'sitemap' if args.sitemap else 'batch'
+        confirmed = confirm_processing(
+            mode=mode,
+            url_count=len(urls),
+            output_dir=args.output_dir,
+            auto_yes=args.yes
+        )
+
+    # Exit if user declined
+    if not confirmed:
+        sys.exit(0)
+
+    # Execute based on mode
+    try:
+        # Both crawl and batch modes now process a list of URLs
+        # (crawl has already discovered the URLs in the previous step)
+        stats = process_multiple_urls(
+            urls,
+            args.output_dir,
+            args.delay,
+            args.continue_on_error
+        )
 
         # Display final report
         stats.report()
