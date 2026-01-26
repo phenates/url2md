@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Web to Markdown Scraper (web_to_md)
+URL to Markdown Scraper (url2md)
 ==================================
 
-Convertit des pages web en fichiers markdown avec support multi-URL,
+Convertit des pages web en fichiers markdown a partir de leurs URL, avec support multi-URL,
 crawling basé sur path, et parsing de sitemap.xml.
 
 Features:
@@ -471,9 +471,11 @@ class URLQueue:
         return None, None
 
     def is_empty(self):
+        """Vérifie si la queue est vide"""
         return len(self.urls) == 0
 
     def size(self):
+        """Retourne la longueur de la queue"""
         return len(self.urls)
 
 
@@ -487,9 +489,11 @@ class ScrapeStats:
         self.start_time = datetime.now()
 
     def record_success(self):
+        """Incremente le compteur de succès."""
         self.successful += 1
 
     def record_failure(self):
+        """Incremente le compteur d'échec."""
         self.failed += 1
 
     def report(self):
@@ -592,8 +596,7 @@ def crawl_by_path(start_url, output_dir, max_depth=1, delay=1.0, max_urls=0):
 
         try:
             # Scraper la page
-            _, soup = scrape_to_markdown(
-                url, output_dir, quiet=False)
+            _, soup = scrape_to_markdown(url, output_dir)
             stats.record_success()
 
             # Extraire liens pour le prochain niveau
@@ -622,7 +625,7 @@ def crawl_by_path(start_url, output_dir, max_depth=1, delay=1.0, max_urls=0):
 # ============================================================
 # CORE SCRAPING
 # ============================================================
-def scrape_to_markdown(url, output_dir='output', quiet=False):
+def scrape_to_markdown(url, output_dir='output'):
     """
     Scrape une URL et convertit en markdown.
 
@@ -727,25 +730,25 @@ def parse_arguments():
         epilog="""
 Exemples:
   # Single URL
-  python web_to_md.py https://example.com/article ./output
+  python url2md.py https://example.com/article ./output
 
   # Multi-URL
-  python web_to_md.py https://example.com/page1 https://example.com/page2 ./output
+  python url2md.py https://example.com/page1 https://example.com/page2 ./output
 
   # Crawling basé sur le path
-  python web_to_md.py --crawl https://example.com/blog/ ./output
+  python url2md.py --crawl https://example.com/blog/ ./output
 
   # Crawling avec profondeur personnalisée
-  python web_to_md.py --crawl --max-depth 2 https://example.com/blog/ ./output
+  python url2md.py --crawl --max-depth 2 https://example.com/blog/ ./output
 
   # Depuis sitemap
-  python web_to_md.py --sitemap https://example.com/sitemap.xml ./output
+  python url2md.py --sitemap https://example.com/sitemap.xml ./output
 
   # Sitemap filtré par path
-  python web_to_md.py --sitemap --filter-path "/blog/" https://example.com/sitemap.xml ./output
+  python url2md.py --sitemap --filter-path "/blog/" https://example.com/sitemap.xml ./output
 
   # Depuis fichier texte
-  python web_to_md.py --file urls.txt ./output
+  python url2md.py --file urls.txt ./output
         """
     )
 
