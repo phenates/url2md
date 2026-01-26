@@ -182,12 +182,16 @@ def clean_html(soup):
     Cleans HTML before conversion by removing navigation and clutter elements.
 
     Removes:
-    - Navigation elements (nav, header, footer, aside)
+    - Navigation elements (nav, header, footer)
     - Scripts and styles
     - Forms, iframes, buttons
     - Common navigation classes (navbar, sidebar, menu, etc.)
     - Advertisement and social sharing widgets
     - Skip-to-content links
+
+    Preserves:
+    - <aside> elements with content classes (callouts, notes, tips)
+    - <details>/<summary> elements (tabs, collapsible sections)
 
     Args:
         soup (BeautifulSoup): Parsed HTML document
@@ -195,19 +199,60 @@ def clean_html(soup):
     Returns:
         BeautifulSoup: Cleaned soup object
     """
-    # Elements to remove by tag name
-    unwanted_tags = ['nav', 'header', 'footer', 'aside', 'script', 'style',
+    # Elements to remove by tag name (NOTE: 'aside' removed from this list)
+    unwanted_tags = ['nav', 'header', 'footer', 'script', 'style',
                      'iframe', 'noscript', 'button', 'form']
 
     for tag in unwanted_tags:
         for element in soup.find_all(tag):
             element.decompose()
 
+    # Selectively remove <aside> elements (only navigation/sidebar ones, not content)
+    for aside in soup.find_all('aside'):
+        classes = ' '.join(aside.get('class', [])).lower()
+        # Preserve asides with content-related classes (callouts, notes, tips, warnings)
+        content_keywords = ['callout', 'note', 'tip', 'warning', 'info', 'caution',
+                           'starlight-aside', 'admonition', 'alert']
+        if not any(keyword in classes for keyword in content_keywords):
+            # Remove navigation/sidebar asides
+            if any(word in classes for word in ['sidebar', 'navigation', 'nav', 'menu']):
+                aside.decompose()
+
+    # Unwrap unnecessary <details> wrappers but preserve content
+    # (markdownify will handle the remaining structure)
+    for details in soup.find_all('details'):
+        classes = ' '.join(details.get('class', [])).lower()
+        # For tab containers, extract content from all tabs
+        if 'tab' in classes:
+            # Find all tab panels within this details element
+            tab_panels = details.find_all(class_=re.compile(r'tab.*panel', re.I))
+            if tab_panels:
+                # Create a wrapper div for all tab content
+                wrapper = soup.new_tag('div')
+                wrapper['class'] = 'tabs-content'
+
+                for panel in tab_panels:
+                    # Extract tab title if available
+                    tab_label = panel.get('aria-labelledby', '')
+                    if tab_label:
+                        # Find the corresponding label
+                        label_elem = soup.find(id=tab_label)
+                        if label_elem:
+                            title = soup.new_tag('h4')
+                            title.string = label_elem.get_text().strip()
+                            wrapper.append(title)
+
+                    # Add panel content
+                    wrapper.append(panel)
+
+                # Replace details with wrapper
+                details.replace_with(wrapper)
+
     # Classes/IDs often related to navigation
     unwanted_classes = ['navigation', 'navbar', 'sidebar', 'menu', 'footer',
                         'header', 'breadcrumb', 'social', 'share', 'cookie',
                         'advertisement', 'ad-', 'banner', 'popup', 'skip',
-                        'category', 'tag', 'meta', 'badge']
+                        'category', 'tag-list', 'meta-', 'badge']
 
     for class_name in unwanted_classes:
         for element in soup.find_all(class_=re.compile(class_name, re.I)):
@@ -391,27 +436,43 @@ def fix_code_blocks(markdown_text):
     - Semicolons in one-liners
     - 'then' and 'fi' keywords in bash conditionals
 
+    IMPORTANT: Only processes content inside code blocks (triple backticks)
+    to avoid breaking regular text.
+
     Args:
         markdown_text (str): Markdown with code blocks
 
     Returns:
         str: Fixed code blocks with proper formatting
     """
-    # Pattern: # comment + command stuck together
+    def fix_code_block_content(match):
+        """Process a single code block."""
+        code_block = match.group(0)
+
+        # Pattern: # comment + command stuck together
+        code_block = re.sub(
+            r'(#[^\n]+?)(if |sudo |docker|npm|git|curl|ssh|apt|dnf|pip|python|bash)',
+            r'\1\n\2',
+            code_block
+        )
+
+        # After semicolons in one-liners
+        code_block = re.sub(r';([a-z])', r';\n\1', code_block)
+
+        # After 'then'
+        code_block = re.sub(r'; then([a-z\s])', r'; then\n\1', code_block)
+
+        # After 'fi' (bash keyword)
+        code_block = re.sub(r'fi([a-z#\s])', r'fi\n\1', code_block)
+
+        return code_block
+
+    # Only process content inside code blocks (between ```)
     markdown_text = re.sub(
-        r'(#[^\n]+?)(if |sudo |docker|npm|git|curl|ssh|apt|dnf|pip|python|bash)',
-        r'\1\n\2',
+        r'```[\s\S]*?```',
+        fix_code_block_content,
         markdown_text
     )
-
-    # After semicolons in one-liners
-    markdown_text = re.sub(r';([a-z])', r';\n\1', markdown_text)
-
-    # After 'then'
-    markdown_text = re.sub(r'; then([a-z\s])', r'; then\n\1', markdown_text)
-
-    # After 'fi'
-    markdown_text = re.sub(r'fi([a-z#\s])', r'fi\n\1', markdown_text)
 
     return markdown_text
 
