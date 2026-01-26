@@ -3,16 +3,16 @@
 URL to Markdown Scraper (url2md)
 ==================================
 
-Convertit des pages web en fichiers markdown a partir de leurs URL, avec support multi-URL,
-crawling basé sur path, et parsing de sitemap.xml.
+Converts web pages to markdown files from their URLs, with support for multi-URL processing,
+path-based crawling, and sitemap.xml parsing.
 
 Features:
-- Single ou multi-URL scraping
-- Crawling basé sur le path (ex: /blog/ → tous les articles du blog)
-- Support sitemap.xml avec filtrage
-- Structure de dossiers préservée
-- Nettoyage HTML intelligent
-- Contenu français optimisé
+- Single or multi-URL scraping
+- Path-based crawling (e.g., /blog/ → all blog articles)
+- sitemap.xml support with filtering
+- Preserved folder structure
+- Intelligent HTML cleaning
+- Optimized for French content
 
 Author: phenates
 """
@@ -34,30 +34,44 @@ from markdownify import markdownify as md
 # STRING & PATH UTILITIES
 # ============================================================
 def sanitize_filename(title):
-    """Convertit un titre en nom de fichier valide."""
-    # Enlever les caractères spéciaux
+    """
+    Converts a title to a valid filename.
+
+    Args:
+        title (str): Page title to sanitize
+
+    Returns:
+        str: Sanitized filename (lowercase, dashed, max 100 chars)
+
+    Examples:
+        >>> sanitize_filename("Hello World!")
+        'hello-world'
+        >>> sanitize_filename("Article: Python Tips & Tricks")
+        'article-python-tips-tricks'
+    """
+    # Remove special characters
     title = re.sub(r'[^\w\s-]', '', title)
-    # Remplacer les espaces par des tirets
+    # Replace spaces with dashes
     title = re.sub(r'[\s_:]+', '-', title)
-    # Tout en minuscules
+    # Convert to lowercase
     title = title.lower().strip('-')
-    # Limiter la longueur
+    # Limit length
     return title[:100] if title else 'untitled'
 
 
 def get_output_path(url, title, output_dir):
     """
-    Génère le chemin de sortie en préservant la structure de l'URL.
+    Generates output path while preserving URL structure.
 
     Args:
-        url: URL source
-        title: Titre de la page (pour nom de fichier)
-        output_dir: Dossier de sortie racine
+        url (str): Source URL
+        title (str): Page title (for filename)
+        output_dir (str): Root output directory
 
     Returns:
-        Path: Chemin complet du fichier à créer
+        Path: Full path of file to create
 
-    Exemple:
+    Example:
         url = "https://example.com/blog/2024/article"
         → output_dir/example.com/blog/2024/article.md
     """
@@ -65,18 +79,18 @@ def get_output_path(url, title, output_dir):
     domain = parsed.netloc
     path = parsed.path.strip('/')
 
-    # Early return pour path vide
+    # Early return for empty path
     if not path:
         filename = sanitize_filename(
             title if title != 'untitled' else 'index') + '.md'
         return Path(output_dir) / domain / filename
 
-    # Extraire dossiers et nom de base
+    # Extract folders and base name
     path_parts = path.split('/')
     dir_parts = path_parts[:-1]
     file_base = path_parts[-1] or 'index'
 
-    # Construire le chemin
+    # Build the path
     base_path = Path(output_dir) / domain
     if dir_parts:
         base_path = base_path / Path(*dir_parts)
@@ -90,8 +104,22 @@ def get_output_path(url, title, output_dir):
 # HTML PROCESSING
 # ============================================================
 def extract_title(soup):
-    """Extrait le titre de la page (essaie plusieurs méthodes)."""
-    # 1. Balise <title>
+    """
+    Extracts page title using multiple fallback methods.
+
+    Tries in order:
+    1. <title> tag
+    2. og:title meta tag
+    3. First <h1> element
+    4. Fallback to "untitled"
+
+    Args:
+        soup (BeautifulSoup): Parsed HTML document
+
+    Returns:
+        str: Extracted title or "untitled"
+    """
+    # 1. <title> tag
     if soup.title and soup.title.string:
         return soup.title.string.strip()
 
@@ -100,26 +128,40 @@ def extract_title(soup):
     if og_title and og_title.get('content'):
         return og_title['content'].strip()
 
-    # 3. Premier <h1>
+    # 3. First <h1>
     h1 = soup.find('h1')
     if h1:
         return h1.get_text().strip()
 
-    # 4. Fallback sur l'URL
+    # 4. Fallback to URL
     return "untitled"
 
 
 def convert_relative_to_absolute_urls(soup, base_url):
-    """Convertit tous les liens relatifs en liens absolus."""
-    # Convertir les liens href (balises <a>)
+    """
+    Converts all relative URLs to absolute URLs.
+
+    Processes:
+    - href attributes in <a> tags
+    - src attributes in <img> tags
+    - srcset attributes for responsive images
+
+    Args:
+        soup (BeautifulSoup): Parsed HTML document
+        base_url (str): Base URL for resolving relative links
+
+    Returns:
+        BeautifulSoup: Modified soup object with absolute URLs
+    """
+    # Convert href links (<a> tags)
     for link in soup.find_all('a', href=True):
         link['href'] = urljoin(base_url, link['href'])
 
-    # Convertir les images src (balises <img>)
+    # Convert image src (<img> tags)
     for img in soup.find_all('img', src=True):
         img['src'] = urljoin(base_url, img['src'])
 
-    # Convertir les sources srcset (images responsive)
+    # Convert srcset sources (responsive images)
     for img in soup.find_all('img', srcset=True):
         srcset_parts = []
         for part in img['srcset'].split(','):
@@ -136,8 +178,24 @@ def convert_relative_to_absolute_urls(soup, base_url):
 
 
 def clean_html(soup):
-    """Nettoie le HTML avant conversion (enlève nav, footer, etc.)."""
-    # Éléments à supprimer
+    """
+    Cleans HTML before conversion by removing navigation and clutter elements.
+
+    Removes:
+    - Navigation elements (nav, header, footer, aside)
+    - Scripts and styles
+    - Forms, iframes, buttons
+    - Common navigation classes (navbar, sidebar, menu, etc.)
+    - Advertisement and social sharing widgets
+    - Skip-to-content links
+
+    Args:
+        soup (BeautifulSoup): Parsed HTML document
+
+    Returns:
+        BeautifulSoup: Cleaned soup object
+    """
+    # Elements to remove by tag name
     unwanted_tags = ['nav', 'header', 'footer', 'aside', 'script', 'style',
                      'iframe', 'noscript', 'button', 'form']
 
@@ -145,7 +203,7 @@ def clean_html(soup):
         for element in soup.find_all(tag):
             element.decompose()
 
-    # Classes/IDs souvent liées à la navigation
+    # Classes/IDs often related to navigation
     unwanted_classes = ['navigation', 'navbar', 'sidebar', 'menu', 'footer',
                         'header', 'breadcrumb', 'social', 'share', 'cookie',
                         'advertisement', 'ad-', 'banner', 'popup', 'skip',
@@ -155,7 +213,7 @@ def clean_html(soup):
         for element in soup.find_all(class_=re.compile(class_name, re.I)):
             element.decompose()
 
-    # Supprimer les liens "skip to content" / "aller au contenu"
+    # Remove "skip to content" links
     for link in soup.find_all('a', href=re.compile(r'#.*top|#content|#main', re.I)):
         link.decompose()
 
@@ -166,20 +224,32 @@ def clean_html(soup):
 # MARKDOWN CLEANUP
 # ============================================================
 def fix_broken_words(markdown_text):
-    """Répare les mots coupés au milieu par des retours à la ligne."""
-    # Réparer les mots coupés: mot suivi d'un retour à la ligne puis d'autres lettres
-    # Pattern: lettre(s) + retour à la ligne + lettre(s) minuscules (sans espace avant)
-    # Exemples: "effi\ncace" -> "efficace", "Dockerfi\nle" -> "Dockerfile"
+    """
+    Repairs words broken mid-line by newlines.
 
-    # Pattern 1: lettres + \n + lettres (cas général)
+    Handles cases where HTML rendering split words across lines:
+    - "effi\\ncace" → "efficace"
+    - "Dockerfi\\nle" → "Dockerfile"
+
+    Uses two patterns:
+    1. Letters + newline + lowercase letters (general case)
+    2. Letter + newline before lowercase (within sentences)
+
+    Args:
+        markdown_text (str): Markdown content with potential broken words
+
+    Returns:
+        str: Text with repaired words
+    """
+    # Pattern 1: letters + \n + letters (general case)
     markdown_text = re.sub(
         r'([a-zéèêëàâäôöûüçîïA-ZÉÈÊËÀÂÄÔÖÛÜÇÎÏ]+)\n([a-zéèêëàâäôöûüçîï]+)',
         r'\1\2',
         markdown_text
     )
 
-    # Pattern 2: mot + \n au milieu d'une phrase (pas avant un titre #, liste -, etc.)
-    # Cible: "mot\nmot" mais pas "mot\n#", "mot\n-", "mot\n\n"
+    # Pattern 2: word + \n within sentence (not before #, -, etc.)
+    # Targets: "word\nword" but not "word\n#", "word\n-", "word\n\n"
     markdown_text = re.sub(
         r'([a-zéèêëàâäôöûüçîï])\n(?=[a-zéèêëàâäôöûüçîï])',
         r'\1',
@@ -191,38 +261,80 @@ def fix_broken_words(markdown_text):
 
 
 def clean_markdown_output(markdown_text):
-    """Nettoyage final du markdown."""
-    # Supprimer "Glissez pour voir" (sous les tableaux)
+    """
+    Final markdown cleanup and normalization.
+
+    Removes:
+    - "Glissez pour voir" (French table scroll hint)
+    - Lines with only whitespace
+    - Trailing spaces on lines
+
+    Normalizes:
+    - Multiple blank lines to maximum two
+
+    Args:
+        markdown_text (str): Raw markdown content
+
+    Returns:
+        str: Cleaned markdown
+    """
+    # Remove "Glissez pour voir" (under tables)
     markdown_text = re.sub(r'^Glissez pour voir\s*$', '',
                            markdown_text, flags=re.MULTILINE)
 
-    # Supprimer les lignes avec juste des espaces
+    # Remove lines with only spaces
     markdown_text = re.sub(r'^\s+$', '', markdown_text, flags=re.MULTILINE)
 
-    # Nettoyer les espaces en fin de ligne
+    # Clean trailing spaces on lines
     markdown_text = re.sub(r' +$', '', markdown_text, flags=re.MULTILINE)
 
-    # Réduire les lignes vides multiples
+    # Reduce multiple blank lines
     markdown_text = re.sub(r'\n{3,}', '\n\n', markdown_text)
 
     return markdown_text
 
 
 def remove_first_h1(markdown_text):
-    """Supprime le premier titre H1 du document."""
-    # Supprimer le premier H1 (une seule fois)
+    """
+    Removes the first H1 heading from the document.
+
+    The title is already in YAML frontmatter, so the first H1
+    is typically redundant.
+
+    Args:
+        markdown_text (str): Markdown content
+
+    Returns:
+        str: Content without first H1
+    """
+    # Remove first H1 (only once)
     markdown_text = re.sub(r'^#\s+.+$', '', markdown_text,
                            count=1, flags=re.MULTILINE)
-    # Nettoyer les lignes vides au début
+    # Clean leading blank lines
     markdown_text = markdown_text.lstrip('\n')
     return markdown_text
 
 
 def remove_unwanted_links(markdown_text):
-    """Supprime UNIQUEMENT les liens Section intitulée et Fenêtre de terminal."""
+    """
+    Removes ONLY navigation artifacts and metadata links specific to French sites.
 
-    # Pattern spécifique pour Section intitulée avec lien complet
-    # Format: [Section intitulée « Titre »](url#anchor)
+    Removes:
+    - "Section intitulée..." links (table of contents anchors)
+    - "Fenêtre de terminal" links (terminal window indicators)
+    - "Aller au contenu" links (skip to content)
+    - Metadata lines (categories, tags, badges)
+
+    Note: Preserves all legitimate content links.
+
+    Args:
+        markdown_text (str): Markdown content
+
+    Returns:
+        str: Content without navigation artifacts
+    """
+    # Specific pattern for "Section intitulée" with full link
+    # Format: [Section intitulée « Title »](url#anchor)
     markdown_text = re.sub(
         r'^\[Section intitul[eéÃ©]+e[^\]]+\]\([^)]+\)\s*$',
         '',
@@ -230,7 +342,7 @@ def remove_unwanted_links(markdown_text):
         flags=re.MULTILINE | re.IGNORECASE
     )
 
-    # Variante texte seul (sans markdown link)
+    # Plain text variant (without markdown link)
     markdown_text = re.sub(
         r'^Section intitul[eéÃ©]+e\s+[«"][^»"]+[»"]\s*$',
         '',
@@ -238,7 +350,7 @@ def remove_unwanted_links(markdown_text):
         flags=re.MULTILINE | re.IGNORECASE
     )
 
-    # Fenêtre de terminal
+    # "Fenêtre de terminal" (terminal window)
     markdown_text = re.sub(
         r'^\[Fen[eêÃª]tre de terminal\]\([^)]+\)\s*$',
         '',
@@ -246,7 +358,7 @@ def remove_unwanted_links(markdown_text):
         flags=re.MULTILINE | re.IGNORECASE
     )
 
-    # Supprimer les liens "Aller au contenu" qui ont échappé au nettoyage HTML
+    # Remove "Aller au contenu" links that escaped HTML cleaning
     markdown_text = re.sub(
         r'^\[Aller au contenu\]\([^)]+\)\s*$',
         '',
@@ -254,9 +366,9 @@ def remove_unwanted_links(markdown_text):
         flags=re.MULTILINE | re.IGNORECASE
     )
 
-    # Supprimer les lignes de métadonnées (catégories, tags, badges)
-    # Pattern: mots simples séparés par espaces sans ponctuation
-    # (ex: "docs informationnelle published debutant")
+    # Remove metadata lines (categories, tags, badges)
+    # Pattern: simple words separated by spaces without punctuation
+    # (e.g., "docs informationnelle published debutant")
     markdown_text = re.sub(
         r'^[a-zA-Z]+(?:\s+[a-zA-Z]+){2,}\s*$',
         '',
@@ -264,28 +376,41 @@ def remove_unwanted_links(markdown_text):
         flags=re.MULTILINE
     )
 
-    # Nettoyer les lignes vides multiples
+    # Clean multiple blank lines
     markdown_text = re.sub(r'\n\n\n+', '\n\n', markdown_text)
 
     return markdown_text
 
 
 def fix_code_blocks(markdown_text):
-    """Corrige les code blocks sans sauts de ligne."""
-    # Pattern : # commentaire + commande collée
+    """
+    Fixes code blocks without proper line breaks.
+
+    Adds newlines after:
+    - Shell comments followed by commands
+    - Semicolons in one-liners
+    - 'then' and 'fi' keywords in bash conditionals
+
+    Args:
+        markdown_text (str): Markdown with code blocks
+
+    Returns:
+        str: Fixed code blocks with proper formatting
+    """
+    # Pattern: # comment + command stuck together
     markdown_text = re.sub(
         r'(#[^\n]+?)(if |sudo |docker|npm|git|curl|ssh|apt|dnf|pip|python|bash)',
         r'\1\n\2',
         markdown_text
     )
 
-    # Après ; dans les one-liners
+    # After semicolons in one-liners
     markdown_text = re.sub(r';([a-z])', r';\n\1', markdown_text)
 
-    # Après 'then'
+    # After 'then'
     markdown_text = re.sub(r'; then([a-z\s])', r'; then\n\1', markdown_text)
 
-    # Après 'fi'
+    # After 'fi'
     markdown_text = re.sub(r'fi([a-z#\s])', r'fi\n\1', markdown_text)
 
     return markdown_text
@@ -296,53 +421,56 @@ def fix_code_blocks(markdown_text):
 # ============================================================
 def parse_sitemap(sitemap_url, filter_path=None):
     """
-    Parse un sitemap.xml et extrait les URLs.
+    Parses sitemap.xml and extracts URLs.
 
-    Supporte:
-    - Sitemaps simples (<url><loc>...)
+    Supports:
+    - Simple sitemaps (<url><loc>...)
     - Sitemap indexes (<sitemap><loc>...)
-    - Filtrage optionnel par préfixe de path
+    - Optional filtering by path prefix
 
     Args:
-        sitemap_url: URL du sitemap.xml
-        filter_path: Préfixe de path optionnel (ex: "/blog/")
+        sitemap_url (str): URL of sitemap.xml
+        filter_path (str, optional): Path prefix filter (e.g., "/blog/")
 
     Returns:
-        list: Liste d'URLs
+        list: List of URLs
+
+    Raises:
+        requests.RequestException: If sitemap cannot be fetched
     """
-    print(f"📋 Parsing du sitemap: {sitemap_url}")
+    print(f"📋 Parsing sitemap: {sitemap_url}")
 
     try:
         response = requests.get(sitemap_url, timeout=30)
         response.raise_for_status()
 
-        # Parser XML avec BeautifulSoup
-        # Note: Nécessite lxml (déjà dans requirements.txt)
+        # Parse XML with BeautifulSoup
+        # Note: Requires lxml (already in requirements.txt)
         soup = BeautifulSoup(response.content, 'xml')
 
         urls = []
 
-        # Vérifier si c'est un sitemap index
+        # Check if it's a sitemap index
         sitemap_tags = soup.find_all('sitemap')
         if sitemap_tags:
-            print(f"📦 Sitemap index détecté ({len(sitemap_tags)} sitemaps)")
-            # Récursif: parser chaque sub-sitemap
+            print(f"📦 Sitemap index detected ({len(sitemap_tags)} sitemaps)")
+            # Recursive: parse each sub-sitemap
             for sitemap_tag in sitemap_tags:
                 loc = sitemap_tag.find('loc')
                 if loc and loc.text:
                     sub_urls = parse_sitemap(loc.text.strip(), filter_path)
                     urls.extend(sub_urls)
         else:
-            # Sitemap simple: extraire les URLs
+            # Simple sitemap: extract URLs
             url_tags = soup.find_all('url')
-            print(f"📄 {len(url_tags)} URLs trouvées")
+            print(f"📄 {len(url_tags)} URLs found")
 
             for url_tag in url_tags:
                 loc = url_tag.find('loc')
                 if loc and loc.text:
                     url = loc.text.strip()
 
-                    # Filtrer par path si spécifié
+                    # Filter by path if specified
                     if filter_path:
                         parsed = urlparse(url)
                         if not parsed.path.startswith(filter_path):
@@ -351,47 +479,47 @@ def parse_sitemap(sitemap_url, filter_path=None):
                     urls.append(url)
 
         if filter_path:
-            print(f"✅ {len(urls)} URLs correspondent au filtre '{filter_path}'")
+            print(f"✅ {len(urls)} URLs match filter '{filter_path}'")
 
         return urls
 
     except Exception as e:
-        print(f"❌ Erreur de parsing du sitemap: {e}")
+        print(f"❌ Sitemap parsing error: {e}")
         return []
 
 
 def extract_links(soup, base_url):
     """
-    Extrait tous les liens HTTP/HTTPS d'une page.
+    Extracts all HTTP/HTTPS links from a page.
 
     Args:
-        soup: BeautifulSoup object
-        base_url: URL de base pour résoudre les liens relatifs
+        soup (BeautifulSoup): Parsed HTML document
+        base_url (str): Base URL for resolving relative links
 
     Returns:
-        set: Ensemble d'URLs absolues
+        set: Set of absolute URLs (without fragments)
     """
     links = set()
 
     for anchor in soup.find_all('a', href=True):
         href = anchor['href']
 
-        # Résoudre liens relatifs
+        # Resolve relative links
         absolute_url = urljoin(base_url, href)
         parsed = urlparse(absolute_url)
 
-        # Filtrer non-HTTP, mailto, tel, etc.
+        # Filter non-HTTP, mailto, tel, etc.
         if parsed.scheme not in ('http', 'https'):
             continue
 
-        # Enlever le fragment (#anchor)
+        # Remove fragment (#anchor)
         clean_url = urlunparse((
             parsed.scheme,
             parsed.netloc,
             parsed.path,
             parsed.params,
             parsed.query,
-            ''  # Pas de fragment
+            ''  # No fragment
         ))
 
         links.add(clean_url)
@@ -400,25 +528,33 @@ def extract_links(soup, base_url):
 
 
 # ============================================================
-# SECTION 6: DATA STRUCTURES
+# DATA STRUCTURES
 # ============================================================
 class URLQueue:
     """
-    Gère une queue d'URLs avec déduplication et filtrage par path.
+    Manages a URL queue with deduplication and path filtering.
 
     Attributes:
-        urls: Liste de tuples (url, depth)
-        visited: Set des URLs déjà visitées
-        base_path: Préfixe de path à respecter (ex: "/blog/")
-        max_depth: Profondeur maximale
+        urls (list): List of tuples (url, depth)
+        visited (set): Set of already visited URLs
+        base_domain (str): Domain to restrict crawling to
+        base_path (str): Path prefix to respect (e.g., "/blog/")
+        max_depth (int): Maximum crawl depth (0 = unlimited)
     """
 
     def __init__(self, start_url, max_depth=1):
+        """
+        Initialize URL queue from a starting URL.
+
+        Args:
+            start_url (str): Starting URL (defines base domain and path)
+            max_depth (int): Maximum crawl depth (default: 1)
+        """
         self.urls = []
         self.visited = set()
         self.max_depth = max_depth
 
-        # Extraire le base path de l'URL de départ
+        # Extract base path from starting URL
         parsed = urlparse(start_url)
         self.base_domain = parsed.netloc
         self.base_path = parsed.path.rstrip('/') + '/'
@@ -427,15 +563,22 @@ class URLQueue:
 
     def add(self, url, depth=0):
         """
-        Ajoute une URL si elle passe les filtres.
+        Adds URL if it passes all filters.
 
-        Filtres:
-        - Pas déjà visitée
-        - Même domaine
-        - Commence par le base_path
-        - Profondeur <= max_depth
+        Filters:
+        - Not already visited
+        - Same domain
+        - Starts with base_path
+        - Depth <= max_depth
+
+        Args:
+            url (str): URL to add
+            depth (int): Depth level of this URL
+
+        Returns:
+            bool: True if URL was added, False if filtered out
         """
-        # Normaliser URL (enlever fragment, trailing slash)
+        # Normalize URL (remove fragment, trailing slash)
         parsed = urlparse(url)
         normalized = urlunparse((
             parsed.scheme,
@@ -446,14 +589,14 @@ class URLQueue:
             ''   # fragment
         ))
 
-        # Filtres
+        # Apply filters
         if normalized in self.visited:
             return False
 
         if parsed.netloc != self.base_domain:
             return False
 
-        # Filtre clé: path doit commencer par base_path
+        # Key filter: path must start with base_path
         if not parsed.path.startswith(self.base_path):
             return False
 
@@ -465,46 +608,70 @@ class URLQueue:
         return True
 
     def get_next(self):
-        """Récupère la prochaine URL (FIFO - Breadth-First Search)."""
+        """
+        Retrieves next URL from queue (FIFO - Breadth-First Search).
+
+        Returns:
+            tuple: (url, depth) or (None, None) if queue is empty
+        """
         if self.urls:
             return self.urls.pop(0)
         return None, None
 
     def is_empty(self):
-        """Vérifie si la queue est vide"""
+        """
+        Checks if queue is empty.
+
+        Returns:
+            bool: True if queue has no more URLs
+        """
         return len(self.urls) == 0
 
     def size(self):
-        """Retourne la longueur de la queue"""
+        """
+        Returns current queue length.
+
+        Returns:
+            int: Number of URLs in queue
+        """
         return len(self.urls)
 
 
 class ScrapeStats:
-    """Suivi des statistiques de scraping."""
+    """
+    Tracks scraping statistics and provides reporting.
+
+    Attributes:
+        total (int): Total URLs processed
+        successful (int): Successfully scraped URLs
+        failed (int): Failed URL attempts
+        start_time (datetime): Start time of scraping session
+    """
 
     def __init__(self):
+        """Initialize statistics tracker."""
         self.total = 0
         self.successful = 0
         self.failed = 0
         self.start_time = datetime.now()
 
     def record_success(self):
-        """Incremente le compteur de succès."""
+        """Increments success counter."""
         self.successful += 1
 
     def record_failure(self):
-        """Incremente le compteur d'échec."""
+        """Increments failure counter."""
         self.failed += 1
 
     def report(self):
-        """Affiche un résumé."""
+        """Prints a summary report of scraping session."""
         duration = datetime.now() - self.start_time
         print(f"\n{'='*60}")
-        print("📊 STATISTIQUES FINALES")
+        print("📊 FINAL STATISTICS")
         print(f"{'='*60}")
-        print(f"✅ Succès:      {self.successful}/{self.total}")
-        print(f"❌ Échecs:      {self.failed}/{self.total}")
-        print(f"⏱️  Durée:       {duration.total_seconds():.1f}s")
+        print(f"✅ Successful:  {self.successful}/{self.total}")
+        print(f"❌ Failed:      {self.failed}/{self.total}")
+        print(f"⏱️  Duration:    {duration.total_seconds():.1f}s")
         print(f"{'='*60}")
 
 
@@ -513,27 +680,30 @@ class ScrapeStats:
 # ============================================================
 def process_multiple_urls(urls, output_dir, delay=1.0, continue_on_error=True):
     """
-    Traite une liste d'URLs avec rate limiting.
+    Processes a list of URLs with rate limiting.
 
     Args:
-        urls: Liste d'URLs
-        output_dir: Dossier de sortie
-        delay: Délai entre requêtes
-        continue_on_error: Continue malgré les erreurs
+        urls (list): List of URLs to process
+        output_dir (str): Output directory
+        delay (float): Delay between requests in seconds (default: 1.0)
+        continue_on_error (bool): Continue despite errors (default: True)
 
     Returns:
-        ScrapeStats: Statistiques
+        ScrapeStats: Statistics object with results
+
+    Raises:
+        Exception: If continue_on_error is False and a scrape fails
     """
     stats = ScrapeStats()
     stats.total = len(urls)
 
     print(f"\n{'='*60}")
-    print(f"📊 TRAITEMENT DE {stats.total} URLs")
+    print(f"📊 PROCESSING {stats.total} URLs")
     print(f"{'='*60}\n")
 
     for i, url in enumerate(urls, 1):
         print(f"\n{'='*60}")
-        print(f"📊 Progression: {i}/{stats.total}")
+        print(f"📊 Progress: {i}/{stats.total}")
         print(f"{'='*60}")
         print(f"🔗 {url}")
 
@@ -542,13 +712,13 @@ def process_multiple_urls(urls, output_dir, delay=1.0, continue_on_error=True):
             stats.record_success()
         except Exception as e:
             stats.record_failure()
-            print(f"❌ Échec: {e}")
+            print(f"❌ Failed: {e}")
             if not continue_on_error:
                 raise
 
-        # Rate limiting (sauf dernière URL)
+        # Rate limiting (except last URL)
         if i < stats.total and delay > 0:
-            print(f"⏳ Pause de {delay}s...")
+            print(f"⏳ Waiting {delay}s...")
             time.sleep(delay)
 
     return stats
@@ -556,50 +726,58 @@ def process_multiple_urls(urls, output_dir, delay=1.0, continue_on_error=True):
 
 def crawl_by_path(start_url, output_dir, max_depth=1, delay=1.0, max_urls=0):
     """
-    Crawle toutes les pages sous le même path que start_url.
+    Crawls all pages under the same path as start_url.
+
+    Uses breadth-first search to discover and process pages within
+    the same path prefix. Automatically preserves directory structure
+    in output.
 
     Args:
-        start_url: URL de départ (définit le base path)
-        output_dir: Dossier de sortie
-        max_depth: Profondeur maximale
-        delay: Délai entre requêtes
-        max_urls: Max URLs à traiter (0 = illimité)
+        start_url (str): Starting URL (defines base path)
+        output_dir (str): Output directory
+        max_depth (int): Maximum crawl depth (0 = unlimited, default: 1)
+        delay (float): Delay between requests in seconds (default: 1.0)
+        max_urls (int): Max URLs to process (0 = unlimited, default: 0)
 
     Returns:
-        ScrapeStats: Statistiques du crawling
+        ScrapeStats: Crawling statistics
+
+    Example:
+        >>> crawl_by_path("https://example.com/blog/", "./output", max_depth=2)
+        # Crawls all pages starting with /blog/ up to 2 levels deep
     """
     queue = URLQueue(start_url, max_depth)
     queue.add(start_url, depth=0)
     stats = ScrapeStats()
 
     print(f"\n{'='*60}")
-    print("🕷️  CRAWLING BASÉ SUR LE PATH")
+    print("🕷️  PATH-BASED CRAWLING")
     print(f"{'='*60}")
-    print(f"URL de départ:   {start_url}")
+    print(f"Starting URL:    {start_url}")
     print(f"Base path:       {queue.base_path}")
-    print(f"Profondeur max:  {max_depth}")
+    print(f"Max depth:       {max_depth}")
     print(f"{'='*60}\n")
 
     while not queue.is_empty():
-        # Limite d'URLs
+        # URL limit check
         if max_urls > 0 and stats.total >= max_urls:
-            print(f"⚠️  Limite de {max_urls} URLs atteinte")
+            print(f"⚠️  Reached limit of {max_urls} URLs")
             break
 
         url, depth = queue.get_next()
         stats.total += 1
 
         print(f"\n{'='*60}")
-        print(f"📊 [{stats.total}] Profondeur: {depth} | File: {queue.size()}")
+        print(f"📊 [{stats.total}] Depth: {depth} | Queue: {queue.size()}")
         print(f"{'='*60}")
         print(f"🔗 {url}")
 
         try:
-            # Scraper la page
+            # Scrape the page
             _, soup = scrape_to_markdown(url, output_dir)
             stats.record_success()
 
-            # Extraire liens pour le prochain niveau
+            # Extract links for next level
             if max_depth == 0 or depth < max_depth:
                 links = extract_links(soup, url)
                 added_count = 0
@@ -608,15 +786,15 @@ def crawl_by_path(start_url, output_dir, max_depth=1, delay=1.0, max_urls=0):
                         added_count += 1
 
                 print(
-                    f"🔗 {len(links)} liens trouvés, {added_count} ajoutés à la file")
+                    f"🔗 {len(links)} links found, {added_count} added to queue")
 
         except Exception as e:
             stats.record_failure()
-            print(f"❌ Échec: {e}")
+            print(f"❌ Failed: {e}")
 
         # Rate limiting
         if not queue.is_empty() and delay > 0:
-            print(f"⏳ Pause de {delay}s...")
+            print(f"⏳ Waiting {delay}s...")
             time.sleep(delay)
 
     return stats
@@ -627,66 +805,73 @@ def crawl_by_path(start_url, output_dir, max_depth=1, delay=1.0, max_urls=0):
 # ============================================================
 def scrape_to_markdown(url, output_dir='output'):
     """
-    Scrape une URL et convertit en markdown.
+    Scrapes a URL and converts it to markdown with YAML frontmatter.
+
+    Processing pipeline:
+    1. Download HTML with UTF-8 encoding
+    2. Parse with BeautifulSoup
+    3. Extract title (from <title>, og:title, or <h1>)
+    4. Clean HTML (remove nav, footer, ads, etc.)
+    5. Convert relative URLs to absolute
+    6. Convert to markdown using markdownify
+    7. Post-process (fix broken words, clean output, remove artifacts)
+    8. Add YAML frontmatter with title, date, source
+    9. Save to file with preserved directory structure
 
     Args:
-        url: URL de la page à scraper
-        output_dir: Répertoire de sortie
-        quiet: Mode silencieux (moins de logs)
+        url (str): URL of page to scrape
+        output_dir (str): Output directory (default: 'output')
 
     Returns:
-        tuple: (Path du fichier créé, BeautifulSoup object)
+        tuple: (Path of created file, BeautifulSoup object)
 
     Raises:
-        requests.RequestException: Erreur réseau
-        Exception: Erreur de traitement
+        requests.RequestException: Network error
+        Exception: Processing error
     """
 
     try:
-        # Télécharger la page avec encodage UTF-8 explicite
-        # print(f"📥 Téléchargement de {url}...")
+        # Download page with explicit UTF-8 encoding
         response = requests.get(url, timeout=30)
         response.raise_for_status()
-        response.encoding = 'utf-8'  # Forcer UTF-8
+        response.encoding = 'utf-8'  # Force UTF-8
         html = response.text
 
-        # Parser avec BeautifulSoup
+        # Parse with BeautifulSoup
         soup = BeautifulSoup(html, 'html.parser')
 
-        # Extraire le titre
+        # Extract title
         title = extract_title(soup)
-        print(f"📄 Titre: {title}")
+        print(f"📄 Title: {title}")
 
-        # Nettoyer le HTML
+        # Clean HTML
         soup = clean_html(soup)
 
-        # Convertir les liens relatifs en liens absolus
-        # print("🔗 Conversion des liens relatifs en liens absolus...")
+        # Convert relative links to absolute
         soup = convert_relative_to_absolute_urls(soup, url)
 
-        # Convertir en markdown avec options optimisées
-        # print("🔄 Conversion en markdown...")
+        # Convert to markdown with optimized options
         markdown = md(
             str(soup),
             heading_style="ATX",
             bullets="-",
             code_language="",
             strip=['script', 'style'],
-            # IMPORTANT: ne pas strip les liens ni images
+            # IMPORTANT: don't strip links or images
             escape_asterisks=False,
             escape_underscores=False
         )
 
-        # Post-traitement
+        # Post-processing
         markdown = fix_broken_words(markdown)
         markdown = fix_code_blocks(markdown)
         markdown = remove_unwanted_links(markdown)
         markdown = clean_markdown_output(markdown)
         markdown = remove_first_h1(markdown)
-        # Deuxième passage pour réparer les mots qui pourraient avoir été recoupés
+        # Second pass to repair words that may have been re-broken
         markdown = fix_broken_words(markdown)
 
-        # Ajouter frontmatter YAML
+        # Add YAML frontmatter
         frontmatter = f"""---
 title: {title}
 created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
@@ -697,25 +882,23 @@ source: {url}
 
         markdown = frontmatter + markdown
 
-        # Créer le nom de fichier
-        # filename = sanitize_filename(title) + '.md'
-        # output_path = Path(output_dir) / filename
+        # Generate output path with preserved directory structure
         output_path = get_output_path(url, title, output_dir)
 
-        # Créer le répertoire si nécessaire
+        # Create directory if needed
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Sauvegarder
+        # Save file
         output_path.write_text(markdown, encoding='utf-8')
-        print(f"✅ Sauvegardé: {output_path}")
+        print(f"✅ Saved: {output_path}")
 
         return output_path, soup
 
     except requests.RequestException as e:
-        print(f"❌ Erreur de téléchargement: {e}")
+        print(f"❌ Download error: {e}")
         raise
     except Exception as e:
-        print(f"❌ Erreur: {e}")
+        print(f"❌ Error: {e}")
         raise
 
 
@@ -723,116 +906,130 @@ source: {url}
 # CLI & ENTRY POINT
 # ============================================================
 def parse_arguments():
-    """Parse les arguments de ligne de commande."""
+    """
+    Parses command-line arguments.
+
+    Returns:
+        argparse.Namespace: Parsed arguments
+    """
     parser = argparse.ArgumentParser(
-        description='Web to Markdown Scraper - Convertit des pages web en markdown',
+        description='Web to Markdown Scraper - Converts web pages to markdown',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Exemples:
+Examples:
   # Single URL
   python url2md.py https://example.com/article ./output
 
   # Multi-URL
   python url2md.py https://example.com/page1 https://example.com/page2 ./output
 
-  # Crawling basé sur le path
+  # Path-based crawling
   python url2md.py --crawl https://example.com/blog/ ./output
 
-  # Crawling avec profondeur personnalisée
+  # Crawling with custom depth
   python url2md.py --crawl --max-depth 2 https://example.com/blog/ ./output
 
-  # Depuis sitemap
+  # From sitemap
   python url2md.py --sitemap https://example.com/sitemap.xml ./output
 
-  # Sitemap filtré par path
+  # Sitemap filtered by path
   python url2md.py --sitemap --filter-path "/blog/" https://example.com/sitemap.xml ./output
 
-  # Depuis fichier texte
+  # From text file
   python url2md.py --file urls.txt ./output
         """
     )
 
-    # Arguments positionnels
-    parser.add_argument('urls', nargs='*', help='URL(s) à scraper')
+    # Positional arguments
+    parser.add_argument('urls', nargs='*', help='URL(s) to scrape')
     parser.add_argument('output_dir', nargs='?', default='output',
-                        help='Répertoire de sortie (défaut:  ./output)')
+                        help='Output directory (default: ./output)')
 
-    # Mode crawling
+    # Crawling mode
     parser.add_argument('-c', '--crawl', action='store_true',
-                        help='Active le crawling basé sur le path de l\'URL')
+                        help='Enable path-based crawling from URL')
     parser.add_argument('-d', '--max-depth', type=int, default=1,
-                        help='Profondeur maximale de crawling (0=illimité, défaut: 1)')
+                        help='Maximum crawl depth (0=unlimited, default: 1)')
 
-    # Mode sitemap
+    # Sitemap mode
     parser.add_argument('-s', '--sitemap', action='store_true',
-                        help='Parse sitemap.xml pour obtenir les URLs')
+                        help='Parse sitemap.xml to get URLs')
     parser.add_argument('--filter-path', type=str,
-                        help='Filtre les URLs par préfixe de path (ex: "/blog/")')
+                        help='Filter URLs by path prefix (e.g., "/blog/")')
 
-    # Fichier d'URLs
+    # URL file input
     parser.add_argument('-f', '--file', type=str,
-                        help='Lire les URLs depuis un fichier texte (une URL par ligne)')
+                        help='Read URLs from text file (one URL per line)')
 
-    # Options de traitement
+    # Processing options
     parser.add_argument('--delay', type=float, default=1.0,
-                        help='Délai entre les requêtes en secondes (défaut: 1.0)')
+                        help='Delay between requests in seconds (default: 1.0)')
     parser.add_argument('--max-urls', type=int, default=0,
-                        help='Nombre maximum d\'URLs à traiter (0=illimité)')
+                        help='Maximum number of URLs to process (0=unlimited)')
     parser.add_argument('--continue-on-error', action='store_true', default=True,
-                        help='Continue le scraping même si certaines URLs échouent')
+                        help='Continue scraping even if some URLs fail')
 
     return parser.parse_args()
 
 
 def main():
-    """Point d'entrée du script."""
+    """
+    Main entry point for the script.
+
+    Orchestrates the scraping workflow:
+    1. Parse command-line arguments
+    2. Collect URLs from various sources (file, sitemap, CLI args)
+    3. Validate URLs
+    4. Execute scraping (batch or crawl mode)
+    5. Display final statistics
+    """
     args = parse_arguments()
 
-    # Collecter les URLs depuis différentes sources
+    # Collect URLs from various sources
     urls = []
 
-    # 1. Depuis fichier texte
+    # 1. From text file
     if args.file:
         try:
             with open(args.file, 'r', encoding='utf-8') as f:
                 file_urls = [line.strip() for line in f if line.strip()
                              and not line.startswith('#')]
                 urls.extend(file_urls)
-                print(f"📄 {len(file_urls)} URLs chargées depuis {args.file}")
+                print(f"📄 {len(file_urls)} URLs loaded from {args.file}")
         except FileNotFoundError:
-            print(f"❌ Fichier non trouvé: {args.file}")
+            print(f"❌ File not found: {args.file}")
             sys.exit(1)
 
-    # 2. Depuis sitemap
+    # 2. From sitemap
     if args.sitemap:
         if not args.urls:
-            print("❌ Veuillez spécifier l'URL du sitemap")
+            print("❌ Please specify sitemap URL")
             sys.exit(1)
         sitemap_urls = parse_sitemap(args.urls[0], args.filter_path)
         urls.extend(sitemap_urls)
 
-    # 3. Depuis arguments CLI
+    # 3. From CLI arguments
     elif args.urls:
         urls.extend(args.urls)
 
-    # Vérifier qu'on a au moins une URL
+    # Check that we have at least one URL
     if not urls:
-        print("❌ Aucune URL fournie")
-        print("\nUtilisez --help pour voir les exemples d'utilisation")
+        print("❌ No URLs provided")
+        print("\nUse --help to see usage examples")
         sys.exit(1)
 
-    # Valider les URLs
+    # Validate URLs
     for url in urls:
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
-            print(f"❌ URL invalide: {url}")
-            print("L'URL doit commencer par http:// ou https://")
+            print(f"❌ Invalid URL: {url}")
+            print("URL must start with http:// or https://")
             sys.exit(1)
 
-    # Exécuter selon le mode
+    # Execute based on mode
     try:
         if args.crawl:
-            # Mode crawling: utilise seulement la première URL comme point de départ
+            # Crawling mode: uses only first URL as starting point
             stats = crawl_by_path(
                 urls[0],
                 args.output_dir,
@@ -841,7 +1038,7 @@ def main():
                 args.max_urls
             )
         else:
-            # Mode batch: traite toutes les URLs
+            # Batch mode: processes all URLs
             stats = process_multiple_urls(
                 urls,
                 args.output_dir,
@@ -849,15 +1046,15 @@ def main():
                 args.continue_on_error
             )
 
-        # Afficher le rapport final
+        # Display final report
         stats.report()
-        print("\n🎉 Scraping terminé !")
+        print("\n🎉 Scraping completed!")
 
     except KeyboardInterrupt:
-        print("\n\n⚠️  Interruption utilisateur (Ctrl+C)")
+        print("\n\n⚠️  User interruption (Ctrl+C)")
         sys.exit(1)
     except Exception as e:
-        print(f"\n❌ Erreur fatale: {e}")
+        print(f"\n❌ Fatal error: {e}")
         sys.exit(1)
 
 
