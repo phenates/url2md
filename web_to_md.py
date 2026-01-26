@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """
-Web to Markdown Scraper
-Convertit une page web en fichier markdown avec le titre comme nom de fichier.
+Web to Markdown Scraper (web_to_md)
+==================================
 
-Usage:
-    python web_to_md.py <url> [output_dir]
-    
-Exemples:
-    python web_to_md.py https://example.com/article
-    python web_to_md.py https://example.com/article ./output
+Convertit des pages web en fichiers markdown avec support multi-URL,
+crawling basé sur path, et parsing de sitemap.xml.
+
+Features:
+- Single ou multi-URL scraping
+- Crawling basé sur le path (ex: /blog/ → tous les articles du blog)
+- Support sitemap.xml avec filtrage
+- Structure de dossiers préservée
+- Nettoyage HTML intelligent
+- Contenu français optimisé
+
+Author: phenates
 """
 
 import argparse
@@ -24,6 +30,9 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 
 
+# ============================================================
+# STRING & PATH UTILITIES
+# ============================================================
 def sanitize_filename(title):
     """Convertit un titre en nom de fichier valide."""
     # Enlever les caractères spéciaux
@@ -36,6 +45,50 @@ def sanitize_filename(title):
     return title[:100] if title else 'untitled'
 
 
+def get_output_path(url, title, output_dir):
+    """
+    Génère le chemin de sortie en préservant la structure de l'URL.
+
+    Args:
+        url: URL source
+        title: Titre de la page (pour nom de fichier)
+        output_dir: Dossier de sortie racine
+
+    Returns:
+        Path: Chemin complet du fichier à créer
+
+    Exemple:
+        url = "https://example.com/blog/2024/article"
+        → output_dir/example.com/blog/2024/article.md
+    """
+    parsed = urlparse(url)
+    domain = parsed.netloc
+    path = parsed.path.strip('/')
+
+    # Early return pour path vide
+    if not path:
+        filename = sanitize_filename(
+            title if title != 'untitled' else 'index') + '.md'
+        return Path(output_dir) / domain / filename
+
+    # Extraire dossiers et nom de base
+    path_parts = path.split('/')
+    dir_parts = path_parts[:-1]
+    file_base = path_parts[-1] or 'index'
+
+    # Construire le chemin
+    base_path = Path(output_dir) / domain
+    if dir_parts:
+        base_path = base_path / Path(*dir_parts)
+
+    filename = sanitize_filename(
+        title if title != 'untitled' else file_base) + '.md'
+    return base_path / filename
+
+
+# ============================================================
+# HTML PROCESSING
+# ============================================================
 def extract_title(soup):
     """Extrait le titre de la page (essaie plusieurs méthodes)."""
     # 1. Balise <title>
@@ -109,24 +162,59 @@ def clean_html(soup):
     return soup
 
 
-def fix_code_blocks(markdown_text):
-    """Corrige les code blocks sans sauts de ligne."""
-    # Pattern : # commentaire + commande collée
+# ============================================================
+# MARKDOWN CLEANUP
+# ============================================================
+def fix_broken_words(markdown_text):
+    """Répare les mots coupés au milieu par des retours à la ligne."""
+    # Réparer les mots coupés: mot suivi d'un retour à la ligne puis d'autres lettres
+    # Pattern: lettre(s) + retour à la ligne + lettre(s) minuscules (sans espace avant)
+    # Exemples: "effi\ncace" -> "efficace", "Dockerfi\nle" -> "Dockerfile"
+
+    # Pattern 1: lettres + \n + lettres (cas général)
     markdown_text = re.sub(
-        r'(#[^\n]+?)(if |sudo |docker|npm|git|curl|ssh|apt|dnf|pip|python|bash)',
-        r'\1\n\2',
+        r'([a-zéèêëàâäôöûüçîïA-ZÉÈÊËÀÂÄÔÖÛÜÇÎÏ]+)\n([a-zéèêëàâäôöûüçîï]+)',
+        r'\1\2',
         markdown_text
     )
 
-    # Après ; dans les one-liners
-    markdown_text = re.sub(r';([a-z])', r';\n\1', markdown_text)
+    # Pattern 2: mot + \n au milieu d'une phrase (pas avant un titre #, liste -, etc.)
+    # Cible: "mot\nmot" mais pas "mot\n#", "mot\n-", "mot\n\n"
+    markdown_text = re.sub(
+        r'([a-zéèêëàâäôöûüçîï])\n(?=[a-zéèêëàâäôöûüçîï])',
+        r'\1',
+        markdown_text,
+        flags=re.IGNORECASE
+    )
 
-    # Après 'then'
-    markdown_text = re.sub(r'; then([a-z\s])', r'; then\n\1', markdown_text)
+    return markdown_text
 
-    # Après 'fi'
-    markdown_text = re.sub(r'fi([a-z#\s])', r'fi\n\1', markdown_text)
 
+def clean_markdown_output(markdown_text):
+    """Nettoyage final du markdown."""
+    # Supprimer "Glissez pour voir" (sous les tableaux)
+    markdown_text = re.sub(r'^Glissez pour voir\s*$', '',
+                           markdown_text, flags=re.MULTILINE)
+
+    # Supprimer les lignes avec juste des espaces
+    markdown_text = re.sub(r'^\s+$', '', markdown_text, flags=re.MULTILINE)
+
+    # Nettoyer les espaces en fin de ligne
+    markdown_text = re.sub(r' +$', '', markdown_text, flags=re.MULTILINE)
+
+    # Réduire les lignes vides multiples
+    markdown_text = re.sub(r'\n{3,}', '\n\n', markdown_text)
+
+    return markdown_text
+
+
+def remove_first_h1(markdown_text):
+    """Supprime le premier titre H1 du document."""
+    # Supprimer le premier H1 (une seule fois)
+    markdown_text = re.sub(r'^#\s+.+$', '', markdown_text,
+                           count=1, flags=re.MULTILINE)
+    # Nettoyer les lignes vides au début
+    markdown_text = markdown_text.lstrip('\n')
     return markdown_text
 
 
@@ -182,59 +270,30 @@ def remove_unwanted_links(markdown_text):
     return markdown_text
 
 
-def fix_broken_words(markdown_text):
-    """Répare les mots coupés au milieu par des retours à la ligne."""
-    # Réparer les mots coupés: mot suivi d'un retour à la ligne puis d'autres lettres
-    # Pattern: lettre(s) + retour à la ligne + lettre(s) minuscules (sans espace avant)
-    # Exemples: "effi\ncace" -> "efficace", "Dockerfi\nle" -> "Dockerfile"
-
-    # Pattern 1: lettres + \n + lettres (cas général)
+def fix_code_blocks(markdown_text):
+    """Corrige les code blocks sans sauts de ligne."""
+    # Pattern : # commentaire + commande collée
     markdown_text = re.sub(
-        r'([a-zéèêëàâäôöûüçîïA-ZÉÈÊËÀÂÄÔÖÛÜÇÎÏ]+)\n([a-zéèêëàâäôöûüçîï]+)',
-        r'\1\2',
+        r'(#[^\n]+?)(if |sudo |docker|npm|git|curl|ssh|apt|dnf|pip|python|bash)',
+        r'\1\n\2',
         markdown_text
     )
 
-    # Pattern 2: mot + \n au milieu d'une phrase (pas avant un titre #, liste -, etc.)
-    # Cible: "mot\nmot" mais pas "mot\n#", "mot\n-", "mot\n\n"
-    markdown_text = re.sub(
-        r'([a-zéèêëàâäôöûüçîï])\n(?=[a-zéèêëàâäôöûüçîï])',
-        r'\1',
-        markdown_text,
-        flags=re.IGNORECASE
-    )
+    # Après ; dans les one-liners
+    markdown_text = re.sub(r';([a-z])', r';\n\1', markdown_text)
+
+    # Après 'then'
+    markdown_text = re.sub(r'; then([a-z\s])', r'; then\n\1', markdown_text)
+
+    # Après 'fi'
+    markdown_text = re.sub(r'fi([a-z#\s])', r'fi\n\1', markdown_text)
 
     return markdown_text
 
 
-def clean_markdown_output(markdown_text):
-    """Nettoyage final du markdown."""
-    # Supprimer "Glissez pour voir" (sous les tableaux)
-    markdown_text = re.sub(r'^Glissez pour voir\s*$', '',
-                           markdown_text, flags=re.MULTILINE)
-
-    # Supprimer les lignes avec juste des espaces
-    markdown_text = re.sub(r'^\s+$', '', markdown_text, flags=re.MULTILINE)
-
-    # Nettoyer les espaces en fin de ligne
-    markdown_text = re.sub(r' +$', '', markdown_text, flags=re.MULTILINE)
-
-    # Réduire les lignes vides multiples
-    markdown_text = re.sub(r'\n{3,}', '\n\n', markdown_text)
-
-    return markdown_text
-
-
-def remove_first_h1(markdown_text):
-    """Supprime le premier titre H1 du document."""
-    # Supprimer le premier H1 (une seule fois)
-    markdown_text = re.sub(r'^#\s+.+$', '', markdown_text,
-                           count=1, flags=re.MULTILINE)
-    # Nettoyer les lignes vides au début
-    markdown_text = markdown_text.lstrip('\n')
-    return markdown_text
-
-
+# ============================================================
+# URL EXTRACTION & CRAWLING
+# ============================================================
 def parse_sitemap(sitemap_url, filter_path=None):
     """
     Parse un sitemap.xml et extrait les URLs.
@@ -301,6 +360,153 @@ def parse_sitemap(sitemap_url, filter_path=None):
         return []
 
 
+def extract_links(soup, base_url):
+    """
+    Extrait tous les liens HTTP/HTTPS d'une page.
+
+    Args:
+        soup: BeautifulSoup object
+        base_url: URL de base pour résoudre les liens relatifs
+
+    Returns:
+        set: Ensemble d'URLs absolues
+    """
+    links = set()
+
+    for anchor in soup.find_all('a', href=True):
+        href = anchor['href']
+
+        # Résoudre liens relatifs
+        absolute_url = urljoin(base_url, href)
+        parsed = urlparse(absolute_url)
+
+        # Filtrer non-HTTP, mailto, tel, etc.
+        if parsed.scheme not in ('http', 'https'):
+            continue
+
+        # Enlever le fragment (#anchor)
+        clean_url = urlunparse((
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            parsed.params,
+            parsed.query,
+            ''  # Pas de fragment
+        ))
+
+        links.add(clean_url)
+
+    return links
+
+
+# ============================================================
+# SECTION 6: DATA STRUCTURES
+# ============================================================
+class URLQueue:
+    """
+    Gère une queue d'URLs avec déduplication et filtrage par path.
+
+    Attributes:
+        urls: Liste de tuples (url, depth)
+        visited: Set des URLs déjà visitées
+        base_path: Préfixe de path à respecter (ex: "/blog/")
+        max_depth: Profondeur maximale
+    """
+
+    def __init__(self, start_url, max_depth=1):
+        self.urls = []
+        self.visited = set()
+        self.max_depth = max_depth
+
+        # Extraire le base path de l'URL de départ
+        parsed = urlparse(start_url)
+        self.base_domain = parsed.netloc
+        self.base_path = parsed.path.rstrip('/') + '/'
+        if self.base_path == '//':
+            self.base_path = '/'
+
+    def add(self, url, depth=0):
+        """
+        Ajoute une URL si elle passe les filtres.
+
+        Filtres:
+        - Pas déjà visitée
+        - Même domaine
+        - Commence par le base_path
+        - Profondeur <= max_depth
+        """
+        # Normaliser URL (enlever fragment, trailing slash)
+        parsed = urlparse(url)
+        normalized = urlunparse((
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path.rstrip('/'),
+            '',  # params
+            parsed.query,
+            ''   # fragment
+        ))
+
+        # Filtres
+        if normalized in self.visited:
+            return False
+
+        if parsed.netloc != self.base_domain:
+            return False
+
+        # Filtre clé: path doit commencer par base_path
+        if not parsed.path.startswith(self.base_path):
+            return False
+
+        if self.max_depth > 0 and depth > self.max_depth:
+            return False
+
+        self.urls.append((normalized, depth))
+        self.visited.add(normalized)
+        return True
+
+    def get_next(self):
+        """Récupère la prochaine URL (FIFO - Breadth-First Search)."""
+        if self.urls:
+            return self.urls.pop(0)
+        return None, None
+
+    def is_empty(self):
+        return len(self.urls) == 0
+
+    def size(self):
+        return len(self.urls)
+
+
+class ScrapeStats:
+    """Suivi des statistiques de scraping."""
+
+    def __init__(self):
+        self.total = 0
+        self.successful = 0
+        self.failed = 0
+        self.start_time = datetime.now()
+
+    def record_success(self):
+        self.successful += 1
+
+    def record_failure(self):
+        self.failed += 1
+
+    def report(self):
+        """Affiche un résumé."""
+        duration = datetime.now() - self.start_time
+        print(f"\n{'='*60}")
+        print("📊 STATISTIQUES FINALES")
+        print(f"{'='*60}")
+        print(f"✅ Succès:      {self.successful}/{self.total}")
+        print(f"❌ Échecs:      {self.failed}/{self.total}")
+        print(f"⏱️  Durée:       {duration.total_seconds():.1f}s")
+        print(f"{'='*60}")
+
+
+# ============================================================
+# BATCH PROCESSING
+# ============================================================
 def process_multiple_urls(urls, output_dir, delay=1.0, continue_on_error=True):
     """
     Traite une liste d'URLs avec rate limiting.
@@ -413,194 +619,10 @@ def crawl_by_path(start_url, output_dir, max_depth=1, delay=1.0, max_urls=0):
     return stats
 
 
-def extract_links(soup, base_url):
-    """
-    Extrait tous les liens HTTP/HTTPS d'une page.
-
-    Args:
-        soup: BeautifulSoup object
-        base_url: URL de base pour résoudre les liens relatifs
-
-    Returns:
-        set: Ensemble d'URLs absolues
-    """
-    links = set()
-
-    for anchor in soup.find_all('a', href=True):
-        href = anchor['href']
-
-        # Résoudre liens relatifs
-        absolute_url = urljoin(base_url, href)
-        parsed = urlparse(absolute_url)
-
-        # Filtrer non-HTTP, mailto, tel, etc.
-        if parsed.scheme not in ('http', 'https'):
-            continue
-
-        # Enlever le fragment (#anchor)
-        clean_url = urlunparse((
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path,
-            parsed.params,
-            parsed.query,
-            ''  # Pas de fragment
-        ))
-
-        links.add(clean_url)
-
-    return links
-
-
-class URLQueue:
-    """
-    Gère une queue d'URLs avec déduplication et filtrage par path.
-
-    Attributes:
-        urls: Liste de tuples (url, depth)
-        visited: Set des URLs déjà visitées
-        base_path: Préfixe de path à respecter (ex: "/blog/")
-        max_depth: Profondeur maximale
-    """
-
-    def __init__(self, start_url, max_depth=1):
-        self.urls = []
-        self.visited = set()
-        self.max_depth = max_depth
-
-        # Extraire le base path de l'URL de départ
-        parsed = urlparse(start_url)
-        self.base_domain = parsed.netloc
-        self.base_path = parsed.path.rstrip('/') + '/'
-        if self.base_path == '//':
-            self.base_path = '/'
-
-    def add(self, url, depth=0):
-        """
-        Ajoute une URL si elle passe les filtres.
-
-        Filtres:
-        - Pas déjà visitée
-        - Même domaine
-        - Commence par le base_path
-        - Profondeur <= max_depth
-        """
-        # Normaliser URL (enlever fragment, trailing slash)
-        parsed = urlparse(url)
-        normalized = urlunparse((
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path.rstrip('/'),
-            '',  # params
-            parsed.query,
-            ''   # fragment
-        ))
-
-        # Filtres
-        if normalized in self.visited:
-            return False
-
-        if parsed.netloc != self.base_domain:
-            return False
-
-        # Filtre clé: path doit commencer par base_path
-        if not parsed.path.startswith(self.base_path):
-            return False
-
-        if self.max_depth > 0 and depth > self.max_depth:
-            return False
-
-        self.urls.append((normalized, depth))
-        self.visited.add(normalized)
-        return True
-
-    def get_next(self):
-        """Récupère la prochaine URL (FIFO - Breadth-First Search)."""
-        if self.urls:
-            return self.urls.pop(0)
-        return None, None
-
-    def is_empty(self):
-        return len(self.urls) == 0
-
-    def size(self):
-        return len(self.urls)
-
-
-class ScrapeStats:
-    """Suivi des statistiques de scraping."""
-
-    def __init__(self):
-        self.total = 0
-        self.successful = 0
-        self.failed = 0
-        self.start_time = datetime.now()
-
-    def record_success(self):
-        self.successful += 1
-
-    def record_failure(self):
-        self.failed += 1
-
-    def report(self):
-        """Affiche un résumé."""
-        duration = datetime.now() - self.start_time
-        print(f"\n{'='*60}")
-        print("📊 STATISTIQUES FINALES")
-        print(f"{'='*60}")
-        print(f"✅ Succès:      {self.successful}/{self.total}")
-        print(f"❌ Échecs:      {self.failed}/{self.total}")
-        print(f"⏱️  Durée:       {duration.total_seconds():.1f}s")
-        print(f"{'='*60}")
-
-
-def get_output_path(url, title, output_dir):
-    """
-    Génère le chemin de sortie en préservant la structure de l'URL.
-
-    Args:
-        url: URL source
-        title: Titre de la page (pour nom de fichier)
-        output_dir: Dossier de sortie racine
-
-    Returns:
-        Path: Chemin complet du fichier à créer
-
-    Exemple:
-        url = "https://example.com/blog/2024/article"
-        → output_dir/example.com/blog/2024/article.md
-    """
-    parsed = urlparse(url)
-    domain = parsed.netloc
-    path = parsed.path.strip('/')
-
-    # Créer structure de dossiers
-    if path:
-        path_parts = path.split('/')
-        # Utiliser le dernier segment pour le nom de fichier
-        if len(path_parts) > 0:
-            dir_parts = path_parts[:-1]  # Tous sauf le dernier
-            file_base = path_parts[-1] if path_parts[-1] else 'index'
-        else:
-            dir_parts = []
-            file_base = 'index'
-    else:
-        dir_parts = []
-        file_base = 'index'
-
-    # Construire le chemin
-    base_path = Path(output_dir) / domain
-    if dir_parts:
-        base_path = base_path / Path(*dir_parts)
-
-    # Nom de fichier: titre sanitisé ou dernier segment
-    filename = sanitize_filename(
-        title if title != 'untitled' else file_base) + '.md'
-
-    return base_path / filename
-
-
-def scrape_to_markdown(url, output_dir='.', quiet=False):
+# ============================================================
+# CORE SCRAPING
+# ============================================================
+def scrape_to_markdown(url, output_dir='output', quiet=False):
     """
     Scrape une URL et convertit en markdown.
 
@@ -616,11 +638,10 @@ def scrape_to_markdown(url, output_dir='.', quiet=False):
         requests.RequestException: Erreur réseau
         Exception: Erreur de traitement
     """
-    if not quiet:
-        print(f"📥 Téléchargement de {url}...")
 
     try:
         # Télécharger la page avec encodage UTF-8 explicite
+        # print(f"📥 Téléchargement de {url}...")
         response = requests.get(url, timeout=30)
         response.raise_for_status()
         response.encoding = 'utf-8'  # Forcer UTF-8
@@ -637,11 +658,11 @@ def scrape_to_markdown(url, output_dir='.', quiet=False):
         soup = clean_html(soup)
 
         # Convertir les liens relatifs en liens absolus
-        print("🔗 Conversion des liens relatifs en liens absolus...")
+        # print("🔗 Conversion des liens relatifs en liens absolus...")
         soup = convert_relative_to_absolute_urls(soup, url)
 
         # Convertir en markdown avec options optimisées
-        print("🔄 Conversion en markdown...")
+        # print("🔄 Conversion en markdown...")
         markdown = md(
             str(soup),
             heading_style="ATX",
@@ -695,6 +716,9 @@ source: {url}
         raise
 
 
+# ============================================================
+# CLI & ENTRY POINT
+# ============================================================
 def parse_arguments():
     """Parse les arguments de ligne de commande."""
     parser = argparse.ArgumentParser(
@@ -728,7 +752,7 @@ Exemples:
     # Arguments positionnels
     parser.add_argument('urls', nargs='*', help='URL(s) à scraper')
     parser.add_argument('output_dir', nargs='?', default='output',
-                        help='Répertoire de sortie (défaut: répertoire courant)')
+                        help='Répertoire de sortie (défaut:  ./output)')
 
     # Mode crawling
     parser.add_argument('-c', '--crawl', action='store_true',
