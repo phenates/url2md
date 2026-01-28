@@ -1373,6 +1373,8 @@ def scrape_to_markdown(url, output_dir='output'):
         # Extract title
         title = extract_title(soup)
         print(f"📄 Title: {title}")
+        # Replace colon with dashes
+        title = re.sub(r'[:]+', '-', title)
 
         # Clean HTML
         soup = clean_html(soup)
