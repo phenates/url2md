@@ -177,7 +177,7 @@ def sanitize_filename(title):
     return title[:100] if title else 'untitled'
 
 
-def get_output_path(url, title, output_dir):
+def get_output_path(url, title, output_dir, use_path_name=False):
     """
     Generates output path while preserving URL structure.
 
@@ -185,13 +185,15 @@ def get_output_path(url, title, output_dir):
         url (str): Source URL
         title (str): Page title (for filename)
         output_dir (str): Root output directory
+        use_path_name (bool): Use last directory from URL path as filename instead of title (default: False)
 
     Returns:
         Path: Full path of file to create
 
     Example:
         url = "https://example.com/blog/2024/article"
-        → output_dir/example.com/blog/2024/article.md
+        use_path_name=False → output_dir/example.com/blog/2024/article-page-title.md
+        use_path_name=True → output_dir/example.com/blog/2024/article.md
     """
     parsed = urlparse(url)
     domain = parsed.netloc
@@ -199,8 +201,11 @@ def get_output_path(url, title, output_dir):
 
     # Early return for empty path
     if not path:
-        filename = sanitize_filename(
-            title if title != 'untitled' else 'index') + '.md'
+        if use_path_name:
+            filename = 'index.md'
+        else:
+            filename = sanitize_filename(
+                title if title != 'untitled' else 'index') + '.md'
         return Path(output_dir) / domain / filename
 
     # Extract folders and base name
@@ -213,8 +218,15 @@ def get_output_path(url, title, output_dir):
     if dir_parts:
         base_path = base_path / Path(*dir_parts)
 
-    filename = sanitize_filename(
-        title if title != 'untitled' else file_base) + '.md'
+    # Choose filename strategy
+    if use_path_name:
+        # Use last directory name from URL path
+        filename = sanitize_filename(file_base) + '.md'
+    else:
+        # Use page title (default behavior)
+        filename = sanitize_filename(
+            title if title != 'untitled' else file_base) + '.md'
+
     return base_path / filename
 
 
@@ -788,9 +800,11 @@ def remove_initial_metadata(markdown_text):
         words = stripped.split()
         if len(words) >= 3:
             # Check if all words are simple (letters only, including French)
-            all_simple = all(re.match(r'^[a-zA-ZéèêëàâäôöûüçîïÉÈÊËÀÂÄÔÖÛÜÇÎÏ]+$', word) for word in words)
+            all_simple = all(
+                re.match(r'^[a-zA-ZéèêëàâäôöûüçîïÉÈÊËÀÂÄÔÖÛÜÇÎÏ]+$', word) for word in words)
             # Check if line doesn't contain markdown formatting (bold, italic, links, etc.)
-            has_markdown = any(char in stripped for char in ['*', '[', ']', '(', ')', '#', '`'])
+            has_markdown = any(char in stripped for char in [
+                               '*', '[', ']', '(', ')', '#', '`'])
 
             if all_simple and not has_markdown:
                 cleaned_lines += 1
@@ -1181,13 +1195,13 @@ class URLQueue:
         max_depth (int): Maximum crawl depth (0 = unlimited)
     """
 
-    def __init__(self, start_url, max_depth=1):
+    def __init__(self, start_url, max_depth=0):
         """
         Initialize URL queue from a starting URL.
 
         Args:
             start_url (str): Starting URL (defines base domain and path)
-            max_depth (int): Maximum crawl depth (default: 1)
+            max_depth (int): Maximum crawl depth (default: 0 - unlimited)
         """
         self.urls = []
         self.visited = set()
@@ -1317,7 +1331,7 @@ class ScrapeStats:
 # ============================================================
 # BATCH PROCESSING
 # ============================================================
-def process_multiple_urls(urls, output_dir, delay=1.0, continue_on_error=True):
+def process_multiple_urls(urls, output_dir, delay=1.0, continue_on_error=True, use_path_name=False):
     """
     Processes a list of URLs with rate limiting.
 
@@ -1326,6 +1340,7 @@ def process_multiple_urls(urls, output_dir, delay=1.0, continue_on_error=True):
         output_dir (str): Output directory
         delay (float): Delay between requests in seconds (default: 1.0)
         continue_on_error (bool): Continue despite errors (default: True)
+        use_path_name (bool): Use last directory from URL path as filename instead of title (default: False)
 
     Returns:
         ScrapeStats: Statistics object with results
@@ -1347,7 +1362,7 @@ def process_multiple_urls(urls, output_dir, delay=1.0, continue_on_error=True):
         print(f"🔗 {url}")
 
         try:
-            scrape_to_markdown(url, output_dir)
+            scrape_to_markdown(url, output_dir, use_path_name)
             stats.record_success()
         except Exception as e:
             stats.record_failure()
@@ -1421,7 +1436,7 @@ def discover_urls_by_path(start_url, max_depth=0, max_urls=0):
     return discovered
 
 
-def crawl_by_path(start_url, output_dir, max_depth=1, delay=1.0, max_urls=0):
+def crawl_by_path(start_url, output_dir, max_depth=0, delay=1.0, max_urls=0, use_path_name=False):
     """
     Crawls all pages under the same path as start_url.
 
@@ -1432,9 +1447,10 @@ def crawl_by_path(start_url, output_dir, max_depth=1, delay=1.0, max_urls=0):
     Args:
         start_url (str): Starting URL (defines base path)
         output_dir (str): Output directory
-        max_depth (int): Maximum crawl depth (0 = unlimited, default: 1)
+        max_depth (int): Maximum crawl depth (0 = unlimited, default: 0)
         delay (float): Delay between requests in seconds (default: 1.0)
         max_urls (int): Max URLs to process (0 = unlimited, default: 0)
+        use_path_name (bool): Use last directory from URL path as filename instead of title (default: False)
 
     Returns:
         ScrapeStats: Crawling statistics
@@ -1471,7 +1487,7 @@ def crawl_by_path(start_url, output_dir, max_depth=1, delay=1.0, max_urls=0):
 
         try:
             # Scrape the page
-            _, soup = scrape_to_markdown(url, output_dir)
+            _, soup = scrape_to_markdown(url, output_dir, use_path_name)
             stats.record_success()
 
             # Extract links for next level
@@ -1500,7 +1516,7 @@ def crawl_by_path(start_url, output_dir, max_depth=1, delay=1.0, max_urls=0):
 # ============================================================
 # CORE SCRAPING
 # ============================================================
-def scrape_to_markdown(url, output_dir='output'):
+def scrape_to_markdown(url, output_dir='output', use_path_name=False):
     """
     Scrapes a URL and converts it to markdown with YAML frontmatter.
 
@@ -1519,6 +1535,7 @@ def scrape_to_markdown(url, output_dir='output'):
     Args:
         url (str): URL of page to scrape
         output_dir (str): Output directory (default: 'output')
+        use_path_name (bool): Use last directory from URL path as filename instead of title (default: False)
 
     Returns:
         tuple: (Path of created file, BeautifulSoup object)
@@ -1591,7 +1608,7 @@ source: {url}
         markdown = frontmatter + markdown
 
         # Generate output path with preserved directory structure
-        output_path = get_output_path(url, title, output_dir)
+        output_path = get_output_path(url, title, output_dir, use_path_name)
 
         # Create directory if needed
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1676,11 +1693,14 @@ Examples:
   # Multi-URL
   python url2md.py --url https://example.com/page1 --url https://example.com/page2 -o ./output
 
-  # Path-based crawling
+  # Use URL path as filename instead of page title
+  python url2md.py --use-path-name --url https://example.com/blog/my-article -o ./output
+
+  # Path-based crawling (unlimited depth by default)
   python url2md.py --crawl --url https://example.com/blog/ --output ./output
 
-  # Crawling with custom depth
-  python url2md.py --crawl --max-depth 2 -u https://example.com/blog/ -o ./output
+  # Crawling with limited depth
+  python url2md.py --crawl --max-depth 1 -u https://example.com/blog/ -o ./output
 
   # From sitemap
   python url2md.py --sitemap --url https://example.com/sitemap.xml --output ./output
@@ -1705,8 +1725,8 @@ Examples:
     # Crawling mode
     parser.add_argument('-c', '--crawl', action='store_true',
                         help='Enable path-based crawling from URL')
-    parser.add_argument('-d', '--max-depth', type=int, default=1,
-                        help='Maximum crawl depth (0=unlimited, default: 1)')
+    parser.add_argument('-d', '--max-depth', type=int, default=0,
+                        help='Maximum crawl depth (0=unlimited, default: 0)')
 
     # Sitemap mode
     parser.add_argument('-s', '--sitemap', action='store_true',
@@ -1727,6 +1747,10 @@ Examples:
                         help='Continue scraping even if some URLs fail')
     parser.add_argument('-y', '--yes', action='store_true',
                         help='Skip confirmation prompt and proceed automatically')
+
+    # Filename strategy option
+    parser.add_argument('--use-path-name', action='store_true',
+                        help='Use last directory name from URL path as filename instead of page title')
 
     return parser.parse_args()
 
@@ -1832,7 +1856,8 @@ def main():
             urls,
             args.output_dir,
             args.delay,
-            args.continue_on_error
+            args.continue_on_error,
+            args.use_path_name
         )
 
         # Display final report
