@@ -48,7 +48,7 @@ pip install -r requirements.txt
 ### Basic Syntax
 
 ```bash
-python url2md.py [OPTIONS] <url(s)> [output_dir]
+python url2md.py [OPTIONS] --url <url> --output <directory>
 ```
 
 ### Single URL
@@ -56,15 +56,17 @@ python url2md.py [OPTIONS] <url(s)> [output_dir]
 Scrape a single web page:
 
 ```bash
-python url2md.py https://example.com/article ./output
+python url2md.py --url https://example.com/article --output ./output
 ```
 
 ### Multiple URLs
 
-Process multiple URLs in one run:
+Process multiple URLs in one run (use `--url` multiple times):
 
 ```bash
-python url2md.py https://example.com/page1 https://example.com/page2 ./output
+python url2md.py --url https://example.com/page1 --url https://example.com/page2 --output ./output
+# Or using short flags:
+python url2md.py -u https://example.com/page1 -u https://example.com/page2 -o ./output
 ```
 
 ### Path-Based Crawling (`--crawl`)
@@ -73,13 +75,13 @@ Automatically discover and scrape all pages under a specific path:
 
 ```bash
 # Crawl all pages under /blog/
-python url2md.py --crawl https://example.com/blog/ ./output
+python url2md.py --crawl --url https://example.com/blog/ --output ./output
 
 # Crawl with custom depth (0 = unlimited)
-python url2md.py --crawl --max-depth 2 https://example.com/blog/ ./output
+python url2md.py --crawl --max-depth 2 -u https://example.com/blog/ -o ./output
 
 # Limit the number of URLs
-python url2md.py --crawl --max-urls 50 https://example.com/docs/ ./output
+python url2md.py --crawl --max-urls 50 -u https://example.com/docs/ -o ./output
 ```
 
 **How it works:**
@@ -93,10 +95,10 @@ Extract URLs from a sitemap.xml:
 
 ```bash
 # Process all URLs from sitemap
-python url2md.py --sitemap https://example.com/sitemap.xml ./output
+python url2md.py --sitemap --url https://example.com/sitemap.xml --output ./output
 
 # Filter by path prefix
-python url2md.py --sitemap --filter-path "/blog/" https://example.com/sitemap.xml ./output
+python url2md.py --sitemap --filter-path "/blog/" -u https://example.com/sitemap.xml -o ./output
 ```
 
 ### From Text File (`--file`)
@@ -104,7 +106,7 @@ python url2md.py --sitemap --filter-path "/blog/" https://example.com/sitemap.xm
 Read URLs from a text file (one URL per line):
 
 ```bash
-python url2md.py --file urls.txt ./output
+python url2md.py --file urls.txt --output ./output
 ```
 
 **Example `urls.txt`:**
@@ -117,17 +119,19 @@ https://example.com/page3
 
 ## ⚙️ Options
 
-| Option                | Short | Description                                     | Default |
-| --------------------- | ----- | ----------------------------------------------- | ------- |
-| `--crawl`             | `-c`  | Enable path-based crawling                      | `false` |
-| `--max-depth`         | `-d`  | Maximum crawl depth (0=unlimited)               | `1`     |
-| `--sitemap`           | `-s`  | Parse sitemap.xml for URLs                      | `false` |
-| `--filter-path`       |       | Filter sitemap URLs by path prefix              | None    |
-| `--file`              | `-f`  | Read URLs from text file                        | None    |
-| `--delay`             |       | Delay between requests (seconds)                | `1.0`   |
-| `--max-urls`          |       | Maximum number of URLs to process (0=unlimited) | `0`     |
-| `--continue-on-error` |       | Continue scraping if some URLs fail             | `true`  |
-| `--yes`               | `-y`  | Skip confirmation prompt (for automation)       | `false` |
+| Option                | Short | Description                                     | Default    |
+| --------------------- | ----- | ----------------------------------------------- | ---------- |
+| `--url`               | `-u`  | URL to scrape (can be used multiple times)      | None       |
+| `--output`            | `-o`  | Output directory                                | `./output` |
+| `--crawl`             | `-c`  | Enable path-based crawling                      | `false`    |
+| `--max-depth`         | `-d`  | Maximum crawl depth (0=unlimited)               | `1`        |
+| `--sitemap`           | `-s`  | Parse sitemap.xml for URLs                      | `false`    |
+| `--filter-path`       |       | Filter sitemap URLs by path prefix              | None       |
+| `--file`              | `-f`  | Read URLs from text file                        | None       |
+| `--delay`             |       | Delay between requests (seconds)                | `1.0`      |
+| `--max-urls`          |       | Maximum number of URLs to process (0=unlimited) | `0`        |
+| `--continue-on-error` |       | Continue scraping if some URLs fail             | `true`     |
+| `--yes`               | `-y`  | Skip confirmation prompt (for automation)       | `false`    |
 
 ## 📁 Output Format
 
@@ -168,7 +172,7 @@ output/
 Save entire documentation sites locally:
 
 ```bash
-python url2md.py --crawl --max-depth 3 https://docs.example.com/ ./docs-backup
+python url2md.py --crawl --max-depth 3 --url https://docs.example.com/ --output ./docs-backup
 ```
 
 ### Blog Migration
@@ -176,7 +180,7 @@ python url2md.py --crawl --max-depth 3 https://docs.example.com/ ./docs-backup
 Export all blog posts for migration:
 
 ```bash
-python url2md.py --sitemap --filter-path "/blog/" https://myblog.com/sitemap.xml ./blog-export
+python url2md.py --sitemap --filter-path "/blog/" -u https://myblog.com/sitemap.xml -o ./blog-export
 ```
 
 ### Research Collection
@@ -184,7 +188,7 @@ python url2md.py --sitemap --filter-path "/blog/" https://myblog.com/sitemap.xml
 Gather articles for offline reading:
 
 ```bash
-python url2md.py --file research-links.txt ./research
+python url2md.py --file research-links.txt --output ./research
 ```
 
 ### Automated Scraping
@@ -192,7 +196,7 @@ python url2md.py --file research-links.txt ./research
 Skip confirmation for scripts and automation:
 
 ```bash
-python url2md.py --yes --crawl https://example.com/news/ ./daily-news
+python url2md.py --yes --crawl -u https://example.com/news/ -o ./daily-news
 ```
 
 ## 🛠️ How It Works
@@ -203,10 +207,11 @@ python url2md.py --yes --crawl https://example.com/news/ ./daily-news
 2. **Parse** - Parse HTML using BeautifulSoup
 3. **Extract Title** - Try `<title>`, `og:title`, first `<h1>`, or fallback to "untitled"
 4. **Clean HTML** - Remove navigation, ads, scripts, social widgets
-5. **Convert Links** - Make all relative URLs absolute
-6. **Markdownify** - Convert cleaned HTML to markdown
-7. **Post-Process** - Fix broken words, clean output, remove artifacts
-8. **Save** - Add YAML frontmatter and save with preserved directory structure
+5. **Convert Callouts** - Transform callout/admonition blocks to Markdown format (`> [!TYPE]`)
+6. **Convert Links** - Make all relative URLs absolute
+7. **Markdownify** - Convert cleaned HTML to markdown
+8. **Post-Process** - Fix broken words, format callouts, clean output, remove artifacts
+9. **Save** - Add YAML frontmatter and save with preserved directory structure
 
 ### HTML Cleaning
 
@@ -218,10 +223,31 @@ The script intelligently removes:
 - Common CSS classes: navbar, sidebar, menu, breadcrumb, cookie banners
 - Skip-to-content links
 
+### Callout Support
+
+The script automatically detects and converts callout/admonition blocks to Markdown callout format (compatible with Obsidian and GitHub):
+
+**Supported callout types:**
+- 📘 **NOTE, INFO, HINT** - Informational content
+- 💡 **TIP, SUCCESS** - Helpful tips and success messages
+- ⚠️ **WARNING, CAUTION, ATTENTION** - Warning messages
+- 🚨 **DANGER, ERROR, CRITICAL** - Critical warnings
+- 📝 **EXAMPLE** - Example blocks
+- ❓ **QUESTION, FAQ** - Questions and FAQs
+- 💬 **QUOTE, CITE** - Quotations
+
+**Output format:**
+```markdown
+> [!NOTE] Optional Title
+> Content of the callout
+> Can span multiple lines
+```
+
 ### Post-Processing
 
 - **Fix broken words** - Repairs words split across lines (e.g., "effi\ncace" → "efficace")
 - **Fix code blocks** - Adds proper newlines in shell commands
+- **Format callouts** - Ensures proper markdown callout syntax with `>` prefixes
 - **Remove artifacts** - Strips French navigation patterns ("Section intitulée", "Fenêtre de terminal")
 - **Clean output** - Removes trailing spaces and reduces multiple blank lines
 - **Remove first H1** - Title is already in frontmatter
@@ -261,7 +287,7 @@ Always check and respect the site's `robots.txt` before large-scale scraping.
 Use the `--delay` option to be respectful to the server:
 
 ```bash
-python url2md.py --crawl --delay 2.0 https://example.com/docs/ ./output
+python url2md.py --crawl --delay 2.0 -u https://example.com/docs/ -o ./output
 ```
 
 ### Handling Large Sites
@@ -269,7 +295,7 @@ python url2md.py --crawl --delay 2.0 https://example.com/docs/ ./output
 For very large sites, use `--max-urls` to limit processing:
 
 ```bash
-python url2md.py --crawl --max-urls 100 https://bigsite.com/docs/ ./output
+python url2md.py --crawl --max-urls 100 -u https://bigsite.com/docs/ -o ./output
 ```
 
 ### Debugging Failed URLs
@@ -277,7 +303,7 @@ python url2md.py --crawl --max-urls 100 https://bigsite.com/docs/ ./output
 Set `--continue-on-error` to false to stop on first error:
 
 ```bash
-python url2md.py --continue-on-error=false https://example.com/page ./output
+python url2md.py --continue-on-error=false -u https://example.com/page -o ./output
 ```
 
 ## 🐛 Troubleshooting
@@ -286,7 +312,7 @@ python url2md.py --continue-on-error=false https://example.com/page ./output
 
 Increase the timeout in the source code or add delays:
 ```bash
-python url2md.py --delay 2.0 <url> ./output
+python url2md.py --delay 2.0 -u https://example.com/page -o ./output
 ```
 
 ### Empty output files

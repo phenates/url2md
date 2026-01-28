@@ -212,7 +212,7 @@ def clean_html(soup):
         classes = ' '.join(aside.get('class', [])).lower()
         # Preserve asides with content-related classes (callouts, notes, tips, warnings)
         content_keywords = ['callout', 'note', 'tip', 'warning', 'info', 'caution',
-                           'starlight-aside', 'admonition', 'alert']
+                            'starlight-aside', 'admonition', 'alert']
         if not any(keyword in classes for keyword in content_keywords):
             # Remove navigation/sidebar asides
             if any(word in classes for word in ['sidebar', 'navigation', 'nav', 'menu']):
@@ -225,7 +225,8 @@ def clean_html(soup):
         # For tab containers, extract content from all tabs
         if 'tab' in classes:
             # Find all tab panels within this details element
-            tab_panels = details.find_all(class_=re.compile(r'tab.*panel', re.I))
+            tab_panels = details.find_all(
+                class_=re.compile(r'tab.*panel', re.I))
             if tab_panels:
                 # Create a wrapper div for all tab content
                 wrapper = soup.new_tag('div')
@@ -261,6 +262,123 @@ def clean_html(soup):
     # Remove "skip to content" links
     for link in soup.find_all('a', href=re.compile(r'#.*top|#content|#main', re.I)):
         link.decompose()
+
+    return soup
+
+
+def convert_callouts_to_markdown(soup):
+    """
+    Converts HTML callout/admonition blocks to Markdown callout format.
+
+    Detects common callout patterns in HTML (divs/aside with classes like
+    note, warning, tip, caution, important) and converts them to Obsidian/GitHub
+    callout format: > [!TYPE]
+
+    Supported callout types:
+    - NOTE, INFO, HINT
+    - TIP, SUCCESS
+    - WARNING, CAUTION, ATTENTION
+    - DANGER, ERROR, CRITICAL
+    - EXAMPLE
+    - QUESTION, FAQ
+    - QUOTE, CITE
+
+    Args:
+        soup (BeautifulSoup): Parsed HTML document
+
+    Returns:
+        BeautifulSoup: Modified soup with callouts converted to blockquotes
+
+    Example:
+        HTML: <div class="note">This is important</div>
+        Result: <blockquote data-callout="NOTE">This is important</blockquote>
+    """
+    # Mapping of CSS class patterns to callout types
+    callout_mappings = {
+        'note': 'NOTE',
+        'info': 'NOTE',
+        'hint': 'NOTE',
+        'tip': 'TIP',
+        'success': 'TIP',
+        'important': 'IMPORTANT',
+        'warning': 'WARNING',
+        'caution': 'WARNING',
+        'attention': 'WARNING',
+        'danger': 'DANGER',
+        'error': 'DANGER',
+        'critical': 'DANGER',
+        'example': 'EXAMPLE',
+        'question': 'QUESTION',
+        'faq': 'QUESTION',
+        'quote': 'QUOTE',
+        'cite': 'QUOTE',
+        'admonition': 'NOTE',
+    }
+
+    # Tags that typically contain callouts
+    callout_tags = ['div', 'aside', 'blockquote', 'section']
+
+    for tag_name in callout_tags:
+        for element in soup.find_all(tag_name):
+            # Skip if this element is already inside another callout/blockquote
+            # Check if any parent already has callout classes or is a blockquote
+            parent_is_callout = False
+            for parent in element.parents:
+                if parent.name == 'blockquote':
+                    parent_is_callout = True
+                    break
+                parent_classes = parent.get('class', [])
+                if parent_classes:
+                    parent_classes_str = ' '.join(parent_classes).lower()
+                    for pattern in callout_mappings.keys():
+                        if pattern in parent_classes_str:
+                            parent_is_callout = True
+                            break
+                if parent_is_callout:
+                    break
+
+            if parent_is_callout:
+                continue
+
+            # Get all classes as lowercase
+            classes = element.get('class', [])
+            if not classes:
+                continue
+
+            classes_str = ' '.join(classes).lower()
+
+            # Check if any callout pattern matches
+            callout_type = None
+            for pattern, ctype in callout_mappings.items():
+                if pattern in classes_str:
+                    callout_type = ctype
+                    break
+
+            if callout_type:
+                # Extract title if present (often in a nested element)
+                title = None
+                title_elem = element.find(['p', 'div', 'span'], class_=re.compile(r'title|heading|header', re.I))
+                if title_elem:
+                    title = title_elem.get_text().strip()
+                    title_elem.decompose()  # Remove title element
+
+                # Create new blockquote with a special marker
+                blockquote = soup.new_tag('blockquote')
+
+                # Add callout marker that will survive markdown conversion
+                marker = soup.new_tag('p')
+                if title:
+                    marker.string = f'[!{callout_type}] {title}'
+                else:
+                    marker.string = f'[!{callout_type}]'
+                blockquote.append(marker)
+
+                # Move all content to blockquote
+                for child in list(element.children):
+                    blockquote.append(child)
+
+                # Replace original element
+                element.replace_with(blockquote)
 
     return soup
 
@@ -425,6 +543,171 @@ def remove_unwanted_links(markdown_text):
     markdown_text = re.sub(r'\n\n\n+', '\n\n', markdown_text)
 
     return markdown_text
+
+
+def deduplicate_nested_callouts(markdown_text):
+    """
+    Removes nested/duplicated callout markers from improperly nested blockquotes.
+
+    When HTML callouts are nested, the markdown conversion can create multiple
+    levels of blockquotes with the same [!TYPE] marker. This function flattens
+    them to a single callout.
+
+    Args:
+        markdown_text (str): Markdown text with potentially nested callouts
+
+    Returns:
+        str: Markdown text with deduplicated callouts
+
+    Example:
+        Input:
+            > [!NOTE]
+            >
+            > > [!NOTE]
+            > > Content
+
+        Output:
+            > [!NOTE]
+            >
+            > Content
+    """
+    lines = markdown_text.split('\n')
+    result = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        # Check if this is a callout marker line (> [!TYPE])
+        match = re.match(r'^(>+)\s*\[!(\w+)\](.*)$', line)
+        if match:
+            quote_level = len(match.group(1))
+            callout_type = match.group(2)
+            title = match.group(3).strip()
+
+            # Look ahead to see if there are nested callouts of the same or different type
+            j = i + 1
+            skip_nested = False
+
+            # Check next few lines for nested callouts
+            while j < len(lines) and j < i + 10:
+                next_line = lines[j]
+                nested_match = re.match(r'^(>+)\s*\[!(\w+)\](.*)$', next_line)
+
+                if nested_match:
+                    nested_level = len(nested_match.group(1))
+                    # If we found a nested callout (more > than current)
+                    if nested_level > quote_level:
+                        # Skip all lines until we find the nested callout
+                        skip_nested = True
+                        # Adjust i to skip the empty lines before nested callout
+                        for k in range(i + 1, j):
+                            if lines[k].strip() and not lines[k].startswith('>'):
+                                result.append(lines[k])
+                        i = j - 1  # Will be incremented at end of loop
+                        break
+                    else:
+                        # Found a same-level or lower-level callout, stop looking
+                        break
+                elif not next_line.startswith('>'):
+                    # Not a blockquote line, stop looking
+                    break
+
+                j += 1
+
+            if not skip_nested:
+                result.append(line)
+        else:
+            # Not a callout marker, check if it's a nested blockquote line
+            # that should have its nesting level reduced
+            nested_match = re.match(r'^(>)\s+(>+)\s*(.*)$', line)
+            if nested_match:
+                # This is a nested blockquote line, reduce nesting by one level
+                reduced_line = f'> {nested_match.group(3)}'
+                result.append(reduced_line)
+            else:
+                result.append(line)
+
+        i += 1
+
+    return '\n'.join(result)
+
+
+def format_callouts(markdown_text):
+    """
+    Formats callout blocks to ensure proper Markdown callout syntax.
+
+    Ensures all lines in callout blocks start with > and formats the callout
+    marker [!TYPE] correctly. Supports Obsidian and GitHub flavored callout syntax.
+
+    Args:
+        markdown_text (str): Markdown text with callout markers
+
+    Returns:
+        str: Markdown text with properly formatted callouts
+
+    Example:
+        Input:
+            > [!NOTE] Important
+            > This is a note
+            Some content
+
+        Output:
+            > [!NOTE] Important
+            > This is a note
+            >
+            > Some content
+    """
+    lines = markdown_text.split('\n')
+    result = []
+    in_callout = False
+    callout_indent = 0
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # Check if line starts a callout
+        if re.match(r'^>\s*\[!(\w+)\]', line):
+            in_callout = True
+            callout_indent = len(line) - len(line.lstrip('>').lstrip())
+            result.append(line)
+            i += 1
+            continue
+
+        # If we're in a callout
+        if in_callout:
+            # Check if line is still part of the callout (starts with >)
+            if line.startswith('>'):
+                result.append(line)
+            # Empty line might be part of callout or end it
+            elif line.strip() == '':
+                # Look ahead to see if next line is part of callout
+                if i + 1 < len(lines) and lines[i + 1].startswith('>'):
+                    result.append('>')
+                else:
+                    # End of callout
+                    in_callout = False
+                    result.append(line)
+            # Non-empty line without > - check if it should be part of callout
+            elif line.strip() and not line.startswith('#'):
+                # If the line is indented or follows a callout, include it
+                if i > 0 and result[-1].startswith('>'):
+                    result.append(f'> {line}')
+                else:
+                    # End of callout
+                    in_callout = False
+                    result.append(line)
+            else:
+                # End of callout
+                in_callout = False
+                result.append(line)
+        else:
+            result.append(line)
+
+        i += 1
+
+    return '\n'.join(result)
 
 
 def fix_code_blocks(markdown_text):
@@ -785,13 +1068,13 @@ def process_multiple_urls(urls, output_dir, delay=1.0, continue_on_error=True):
     return stats
 
 
-def discover_urls_by_path(start_url, max_depth=1, max_urls=0):
+def discover_urls_by_path(start_url, max_depth=0, max_urls=0):
     """
     Discovers all URLs under the same path without scraping (lightweight crawl).
 
     Args:
         start_url (str): Starting URL (defines base path)
-        max_depth (int): Maximum crawl depth (0 = unlimited, default: 1)
+        max_depth (int): Maximum crawl depth (0 = unlimited, default: 0)
         max_urls (int): Max URLs to discover (0 = unlimited, default: 0)
 
     Returns:
@@ -931,11 +1214,12 @@ def scrape_to_markdown(url, output_dir='output'):
     2. Parse with BeautifulSoup
     3. Extract title (from <title>, og:title, or <h1>)
     4. Clean HTML (remove nav, footer, ads, etc.)
-    5. Convert relative URLs to absolute
-    6. Convert to markdown using markdownify
-    7. Post-process (fix broken words, clean output, remove artifacts)
-    8. Add YAML frontmatter with title, date, source
-    9. Save to file with preserved directory structure
+    5. Convert callouts/admonitions to markdown callout format (deduplicate nested)
+    6. Convert relative URLs to absolute
+    7. Convert to markdown using markdownify
+    8. Post-process (fix broken words, deduplicate callouts, format callouts, clean output, remove artifacts)
+    9. Add YAML frontmatter with title, date, source
+    10. Save to file with preserved directory structure
 
     Args:
         url (str): URL of page to scrape
@@ -966,6 +1250,9 @@ def scrape_to_markdown(url, output_dir='output'):
         # Clean HTML
         soup = clean_html(soup)
 
+        # Convert callouts to markdown format
+        soup = convert_callouts_to_markdown(soup)
+
         # Convert relative links to absolute
         soup = convert_relative_to_absolute_urls(soup, url)
 
@@ -985,6 +1272,8 @@ def scrape_to_markdown(url, output_dir='output'):
         markdown = fix_broken_words(markdown)
         markdown = fix_code_blocks(markdown)
         markdown = remove_unwanted_links(markdown)
+        markdown = deduplicate_nested_callouts(markdown)
+        markdown = format_callouts(markdown)
         markdown = clean_markdown_output(markdown)
         markdown = remove_first_h1(markdown)
         # Second pass to repair words that may have been re-broken
@@ -1082,34 +1371,35 @@ def parse_arguments():
         epilog="""
 Examples:
   # Single URL
-  python url2md.py https://example.com/article ./output
+  python url2md.py --url https://example.com/article --output ./output
 
   # Multi-URL
-  python url2md.py https://example.com/page1 https://example.com/page2 ./output
+  python url2md.py --url https://example.com/page1 --url https://example.com/page2 -o ./output
 
   # Path-based crawling
-  python url2md.py --crawl https://example.com/blog/ ./output
+  python url2md.py --crawl --url https://example.com/blog/ --output ./output
 
   # Crawling with custom depth
-  python url2md.py --crawl --max-depth 2 https://example.com/blog/ ./output
+  python url2md.py --crawl --max-depth 2 -u https://example.com/blog/ -o ./output
 
   # From sitemap
-  python url2md.py --sitemap https://example.com/sitemap.xml ./output
+  python url2md.py --sitemap --url https://example.com/sitemap.xml --output ./output
 
   # Sitemap filtered by path
-  python url2md.py --sitemap --filter-path "/blog/" https://example.com/sitemap.xml ./output
+  python url2md.py --sitemap --filter-path "/blog/" -u https://example.com/sitemap.xml -o ./output
 
   # From text file
-  python url2md.py --file urls.txt ./output
+  python url2md.py --file urls.txt --output ./output
 
   # Skip confirmation prompt (for automation)
-  python url2md.py --yes --crawl https://example.com/blog/ ./output
+  python url2md.py --yes --crawl --url https://example.com/blog/ --output ./output
         """
     )
 
-    # Positional arguments
-    parser.add_argument('urls', nargs='*', help='URL(s) to scrape')
-    parser.add_argument('output_dir', nargs='?', default='output',
+    # URL and output options
+    parser.add_argument('-u', '--url', action='append', dest='urls',
+                        help='URL to scrape (can be used multiple times)')
+    parser.add_argument('-o', '--output', dest='output_dir', default='output',
                         help='Output directory (default: ./output)')
 
     # Crawling mode
