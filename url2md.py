@@ -529,6 +529,7 @@ def fix_broken_words(markdown_text):
 
     # Step 1: Extract and protect code blocks
     code_blocks = {}
+
     def replace_code_block(match):
         placeholder = f"CODEBLOCK_{uuid.uuid4().hex}"
         code_blocks[placeholder] = match.group(0)
@@ -590,6 +591,7 @@ def clean_markdown_output(markdown_text):
 
     # Step 1: Extract and protect code blocks
     code_blocks = {}
+
     def replace_code_block(match):
         placeholder = f"CODEBLOCK_{uuid.uuid4().hex}"
         code_blocks[placeholder] = match.group(0)
@@ -604,7 +606,15 @@ def clean_markdown_output(markdown_text):
 
     # Step 2: Clean the rest of the markdown (without code blocks)
 
-    # Remove "Glissez pour voir" (under tables)
+    # Remove "Glissez pour voir" callouts (appears after tables)
+    # Pattern: > [!NOTE]\n>\n> Glissez pour voir
+    markdown_text = re.sub(
+        r'>\s*\[!(NOTE|TIP|WARNING|DANGER|IMPORTANT|EXAMPLE|QUESTION|QUOTE)\]\s*\n>\s*\n>\s*Glissez pour voir\s*\n?',
+        '',
+        markdown_text
+    )
+
+    # Remove standalone "Glissez pour voir" (without callout)
     markdown_text = re.sub(r'^Glissez pour voir\s*$', '',
                            markdown_text, flags=re.MULTILINE)
 
@@ -1391,7 +1401,7 @@ def scrape_to_markdown(url, output_dir='output'):
         markdown = fix_broken_words(markdown)
         markdown = remove_unwanted_links(markdown)
         markdown = deduplicate_nested_callouts(markdown)
-        markdown = format_callouts(markdown)
+        # markdown = format_callouts(markdown)
         markdown = clean_markdown_output(markdown)
         markdown = remove_first_h1(markdown)
         # Second pass to repair words that may have been re-broken
