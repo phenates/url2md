@@ -722,6 +722,86 @@ def remove_unwanted_links(markdown_text):
     return markdown_text
 
 
+def remove_initial_metadata(markdown_text):
+    """
+    Removes initial metadata lines that appear at the start of the document.
+
+    Cleans up:
+    - Repeated title (line starting with space + title text)
+    - Difficulty badges (high, medium, low, etc.)
+    - Tag/category lines (e.g., "docs informationnelle published debutant")
+    - Single word metadata lines at the beginning
+
+    Only processes the first 10 non-empty lines to avoid removing legitimate content.
+
+    Args:
+        markdown_text (str): Markdown content
+
+    Returns:
+        str: Content without initial metadata
+
+    Example:
+        Input:
+             Page Title
+            high
+            docs published intermediate
+
+            ## First Header
+
+        Output:
+            ## First Header
+    """
+    lines = markdown_text.split('\n')
+    result = []
+    cleaned_lines = 0
+    non_empty_count = 0
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # Count non-empty lines to limit metadata cleaning to the beginning
+        if stripped:
+            non_empty_count += 1
+
+        # Only clean the first 10 non-empty lines
+        if non_empty_count > 10:
+            result.append(line)
+            continue
+
+        # Skip empty lines at the beginning (before first content)
+        if not stripped and not result:
+            continue
+
+        # Pattern 1: Line starting with space (repeated title)
+        if line.startswith(' ') and stripped:
+            cleaned_lines += 1
+            continue
+
+        # Pattern 2: Single word difficulty badges
+        if stripped.lower() in ['high', 'medium', 'low', 'easy', 'hard', 'beginner', 'intermediate', 'advanced']:
+            cleaned_lines += 1
+            continue
+
+        # Pattern 3: Tag/category lines (multiple simple words without punctuation)
+        # Must have at least 3 words, all alphanumeric (including French chars)
+        # Examples: "docs informationnelle published debutant"
+        words = stripped.split()
+        if len(words) >= 3:
+            # Check if all words are simple (letters only, including French)
+            all_simple = all(re.match(r'^[a-zA-ZéèêëàâäôöûüçîïÉÈÊËÀÂÄÔÖÛÜÇÎÏ]+$', word) for word in words)
+            # Check if line doesn't contain markdown formatting (bold, italic, links, etc.)
+            has_markdown = any(char in stripped for char in ['*', '[', ']', '(', ')', '#', '`'])
+
+            if all_simple and not has_markdown:
+                cleaned_lines += 1
+                continue
+
+        # Keep this line
+        result.append(line)
+
+    return '\n'.join(result)
+
+
 def deduplicate_nested_callouts(markdown_text):
     """
     Removes nested/duplicated callout markers from improperly nested blockquotes.
@@ -806,6 +886,94 @@ def deduplicate_nested_callouts(markdown_text):
                 result.append(line)
 
         i += 1
+
+    return '\n'.join(result)
+
+
+def remove_unwanted_sections(markdown_text):
+    """
+    Removes specific unwanted sections from markdown content.
+
+    Detects H2 headers (##) with specific titles and removes the entire section
+    including the header and all content until the next header of equal or higher level.
+
+    Removed sections:
+    - "Ce que vous allez apprendre"
+    - "Testez vos connaissances"
+    - "Ce site vous est utile ?"
+
+    Args:
+        markdown_text (str): Markdown content with potential unwanted sections
+
+    Returns:
+        str: Markdown content with unwanted sections removed
+
+    Example:
+        Input:
+            ## Introduction
+            Some content
+            ## Ce que vous allez apprendre
+            - Point 1
+            - Point 2
+            ## Next Section
+            More content
+
+        Output:
+            ## Introduction
+            Some content
+            ## Next Section
+            More content
+    """
+    # List of section titles to remove (case-insensitive, normalized)
+    unwanted_titles = [
+        "ce que vous allez apprendre",
+        "testez vos connaissances",
+        "Contrôle des connaissances",
+        "ce site vous est utile",
+        "ce site vous est utile ?"
+    ]
+
+    lines = markdown_text.split('\n')
+    result = []
+    skip_section = False
+    section_level = 0
+
+    for line in lines:
+        # Check if this is a header line
+        header_match = re.match(r'^(#{1,6})\s+(.+)$', line)
+
+        if header_match:
+            current_level = len(header_match.group(1))
+            title = header_match.group(2).strip()
+
+            # Normalize title for comparison (lowercase, remove trailing punctuation)
+            normalized_title = title.lower().strip().rstrip('?').strip()
+
+            # Check if we should skip this section
+            if current_level == 2 and normalized_title in unwanted_titles:
+                # Start skipping from this line
+                skip_section = True
+                section_level = current_level
+                continue  # Don't add this header line
+
+            # If we're currently skipping, check if this header ends the skip
+            if skip_section:
+                # Stop skipping if we encounter a header of same or higher level
+                if current_level <= section_level:
+                    skip_section = False
+                    section_level = 0
+                    # Add this header (it's the start of a new section)
+                    result.append(line)
+                # Otherwise, continue skipping (this is a sub-header within the unwanted section)
+                continue
+            else:
+                # Normal header, not skipping
+                result.append(line)
+        else:
+            # Not a header line
+            if not skip_section:
+                result.append(line)
+            # Otherwise skip this line (we're in an unwanted section)
 
     return '\n'.join(result)
 
@@ -1402,6 +1570,8 @@ def scrape_to_markdown(url, output_dir='output'):
         # Post-processing
         markdown = fix_broken_words(markdown)
         markdown = remove_unwanted_links(markdown)
+        markdown = remove_initial_metadata(markdown)
+        markdown = remove_unwanted_sections(markdown)
         markdown = deduplicate_nested_callouts(markdown)
         # markdown = format_callouts(markdown)
         markdown = clean_markdown_output(markdown)
