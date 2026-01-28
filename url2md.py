@@ -27,7 +27,125 @@ from urllib.parse import urljoin, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
-from markdownify import markdownify as md
+from markdownify import markdownify as md, MarkdownConverter
+
+
+# ============================================================
+# CUSTOM MARKDOWNIFY
+# ============================================================
+class CustomMarkdownify(MarkdownConverter):
+    """
+    Custom Markdownify converter that preserves code block formatting.
+
+    Overrides the convert_pre method to better preserve whitespace,
+    indentation, and newlines in code blocks.
+
+    Based on solution from: https://github.com/unclecode/crawl4ai/issues/325
+    """
+
+    def convert_pre(self, el, text, **kwargs):
+        """
+        Convert <pre> tags to fenced code blocks while preserving formatting.
+
+        Extracts language from class names (e.g., 'language-python') and
+        preserves all whitespace, tabs, and newlines in the code content.
+
+        Args:
+            el: BeautifulSoup element
+            text (str): Text content (already extracted with whitespace preserved)
+            **kwargs: Additional arguments from markdownify (parent_tags, convert_as_inline, etc.)
+
+        Returns:
+            str: Fenced code block with preserved formatting
+        """
+        # Detect language from class attribute
+        language = ''
+
+        # Check <pre> tag classes
+        pre_class = el.get('class', [])
+        if isinstance(pre_class, str):
+            pre_class = pre_class.split()
+
+        for class_name in pre_class:
+            if class_name.startswith('language-'):
+                language = class_name.replace('language-', '')
+                break
+            elif class_name in ['bash', 'shell', 'sh', 'python', 'py', 'javascript',
+                                'js', 'typescript', 'ts', 'dockerfile', 'docker',
+                                'yaml', 'yml', 'json', 'xml', 'html', 'css', 'sql',
+                                'java', 'c', 'cpp', 'go', 'rust', 'ruby', 'php']:
+                language = class_name
+                break
+
+        # If no language found on <pre>, check nested <code> tag
+        if not language:
+            code_tag = el.find('code')
+            if code_tag:
+                code_class = code_tag.get('class', [])
+                if isinstance(code_class, str):
+                    code_class = code_class.split()
+
+                for class_name in code_class:
+                    if class_name.startswith('language-'):
+                        language = class_name.replace('language-', '')
+                        break
+                    elif class_name in ['bash', 'shell', 'sh', 'python', 'py', 'javascript',
+                                        'js', 'typescript', 'ts', 'dockerfile', 'docker',
+                                        'yaml', 'yml', 'json', 'xml', 'html', 'css', 'sql',
+                                        'java', 'c', 'cpp', 'go', 'rust', 'ruby', 'php']:
+                        language = class_name
+                        break
+
+        # USE the 'text' parameter from markdownify - it has the correct newlines!
+        # But we need to clean up the extra blank lines that markdownify adds
+        code_content = text if text else ''
+
+        # Clean up excessive newlines added by markdownify
+        # Replace 3+ consecutive newlines with just 1 newline
+        code_content = re.sub(r'\n{3,}', '\n', code_content)
+
+        # Remove leading/trailing whitespace from the entire block
+        code_content = code_content.strip()
+
+        # Improve formatting: add blank line before comments (except first one or last one)
+        # This visually groups commands with their related comments
+        if code_content:
+            lines = code_content.split('\n')
+            formatted_lines = []
+            first_comment_seen = False
+
+            for i, line in enumerate(lines):
+                stripped = line.lstrip()
+                # Check if this line is a comment (starts with #)
+                if stripped.startswith('#'):
+                    # Check if there's a non-comment, non-empty line after this comment
+                    has_command_after = False
+                    for j in range(i + 1, len(lines)):
+                        next_stripped = lines[j].lstrip()
+                        if next_stripped and not next_stripped.startswith('#'):
+                            has_command_after = True
+                            break
+                        elif next_stripped.startswith('#'):
+                            # Another comment, keep looking
+                            continue
+
+                    # Add blank line before comment if:
+                    # 1. It's not the first comment
+                    # 2. There's a command after it (not a trailing comment)
+                    # 3. Previous line is not already empty
+                    if first_comment_seen and has_command_after and formatted_lines and formatted_lines[-1] != '':
+                        formatted_lines.append('')
+                    first_comment_seen = True
+
+                formatted_lines.append(line)
+
+            code_content = '\n'.join(formatted_lines)
+
+        # Return fenced code block with preserved text content
+        if code_content:
+            return f'```{language}\n{code_content}\n```\n\n'
+        else:
+            return f'```{language}\n```\n\n'
 
 
 # ============================================================
@@ -357,7 +475,8 @@ def convert_callouts_to_markdown(soup):
             if callout_type:
                 # Extract title if present (often in a nested element)
                 title = None
-                title_elem = element.find(['p', 'div', 'span'], class_=re.compile(r'title|heading|header', re.I))
+                title_elem = element.find(
+                    ['p', 'div', 'span'], class_=re.compile(r'title|heading|header', re.I))
                 if title_elem:
                     title = title_elem.get_text().strip()
                     title_elem.decompose()  # Remove title element
@@ -398,12 +517,32 @@ def fix_broken_words(markdown_text):
     1. Letters + newline + lowercase letters (general case)
     2. Letter + newline before lowercase (within sentences)
 
+    IMPORTANT: Preserves all formatting inside code blocks (```).
+
     Args:
         markdown_text (str): Markdown content with potential broken words
 
     Returns:
         str: Text with repaired words
     """
+    import uuid
+
+    # Step 1: Extract and protect code blocks
+    code_blocks = {}
+    def replace_code_block(match):
+        placeholder = f"CODEBLOCK_{uuid.uuid4().hex}"
+        code_blocks[placeholder] = match.group(0)
+        return placeholder
+
+    # Extract all fenced code blocks (``` ... ```)
+    markdown_text = re.sub(
+        r'```[\s\S]*?```',
+        replace_code_block,
+        markdown_text
+    )
+
+    # Step 2: Fix broken words in the rest of the text (without code blocks)
+
     # Pattern 1: letters + \n + letters (general case)
     markdown_text = re.sub(
         r'([a-zéèêëàâäôöûüçîïA-ZÉÈÊËÀÂÄÔÖÛÜÇÎÏ]+)\n([a-zéèêëàâäôöûüçîï]+)',
@@ -420,6 +559,10 @@ def fix_broken_words(markdown_text):
         flags=re.IGNORECASE
     )
 
+    # Step 3: Restore code blocks with original formatting
+    for placeholder, code_block in code_blocks.items():
+        markdown_text = markdown_text.replace(placeholder, code_block)
+
     return markdown_text
 
 
@@ -429,11 +572,13 @@ def clean_markdown_output(markdown_text):
 
     Removes:
     - "Glissez pour voir" (French table scroll hint)
-    - Lines with only whitespace
-    - Trailing spaces on lines
+    - Lines with only whitespace (OUTSIDE code blocks)
+    - Trailing spaces on lines (OUTSIDE code blocks)
 
     Normalizes:
     - Multiple blank lines to maximum two
+
+    IMPORTANT: Preserves all formatting inside code blocks (```).
 
     Args:
         markdown_text (str): Raw markdown content
@@ -441,6 +586,24 @@ def clean_markdown_output(markdown_text):
     Returns:
         str: Cleaned markdown
     """
+    import uuid
+
+    # Step 1: Extract and protect code blocks
+    code_blocks = {}
+    def replace_code_block(match):
+        placeholder = f"CODEBLOCK_{uuid.uuid4().hex}"
+        code_blocks[placeholder] = match.group(0)
+        return placeholder
+
+    # Extract all fenced code blocks (``` ... ```)
+    markdown_text = re.sub(
+        r'```[\s\S]*?```',
+        replace_code_block,
+        markdown_text
+    )
+
+    # Step 2: Clean the rest of the markdown (without code blocks)
+
     # Remove "Glissez pour voir" (under tables)
     markdown_text = re.sub(r'^Glissez pour voir\s*$', '',
                            markdown_text, flags=re.MULTILINE)
@@ -453,6 +616,10 @@ def clean_markdown_output(markdown_text):
 
     # Reduce multiple blank lines
     markdown_text = re.sub(r'\n{3,}', '\n\n', markdown_text)
+
+    # Step 3: Restore code blocks with original formatting
+    for placeholder, code_block in code_blocks.items():
+        markdown_text = markdown_text.replace(placeholder, code_block)
 
     return markdown_text
 
@@ -532,15 +699,15 @@ def remove_unwanted_links(markdown_text):
     # Remove metadata lines (categories, tags, badges)
     # Pattern: simple words separated by spaces without punctuation
     # (e.g., "docs informationnelle published debutant")
-    markdown_text = re.sub(
-        r'^[a-zA-Z]+(?:\s+[a-zA-Z]+){2,}\s*$',
-        '',
-        markdown_text,
-        flags=re.MULTILINE
-    )
+    # markdown_text = re.sub(
+    #     r'^[a-zA-Z]+(?:\s+[a-zA-Z]+){2,}\s*$',
+    #     '',
+    #     markdown_text,
+    #     flags=re.MULTILINE
+    # )
 
     # Clean multiple blank lines
-    markdown_text = re.sub(r'\n\n\n+', '\n\n', markdown_text)
+    # markdown_text = re.sub(r'\n\n\n+', '\n\n', markdown_text)
 
     return markdown_text
 
@@ -708,56 +875,6 @@ def format_callouts(markdown_text):
         i += 1
 
     return '\n'.join(result)
-
-
-def fix_code_blocks(markdown_text):
-    """
-    Fixes code blocks without proper line breaks.
-
-    Adds newlines after:
-    - Shell comments followed by commands
-    - Semicolons in one-liners
-    - 'then' and 'fi' keywords in bash conditionals
-
-    IMPORTANT: Only processes content inside code blocks (triple backticks)
-    to avoid breaking regular text.
-
-    Args:
-        markdown_text (str): Markdown with code blocks
-
-    Returns:
-        str: Fixed code blocks with proper formatting
-    """
-    def fix_code_block_content(match):
-        """Process a single code block."""
-        code_block = match.group(0)
-
-        # Pattern: # comment + command stuck together
-        code_block = re.sub(
-            r'(#[^\n]+?)(if |sudo |docker|npm|git|curl|ssh|apt|dnf|pip|python|bash)',
-            r'\1\n\2',
-            code_block
-        )
-
-        # After semicolons in one-liners
-        code_block = re.sub(r';([a-z])', r';\n\1', code_block)
-
-        # After 'then'
-        code_block = re.sub(r'; then([a-z\s])', r'; then\n\1', code_block)
-
-        # After 'fi' (bash keyword)
-        code_block = re.sub(r'fi([a-z#\s])', r'fi\n\1', code_block)
-
-        return code_block
-
-    # Only process content inside code blocks (between ```)
-    markdown_text = re.sub(
-        r'```[\s\S]*?```',
-        fix_code_block_content,
-        markdown_text
-    )
-
-    return markdown_text
 
 
 # ============================================================
@@ -1216,7 +1333,7 @@ def scrape_to_markdown(url, output_dir='output'):
     4. Clean HTML (remove nav, footer, ads, etc.)
     5. Convert callouts/admonitions to markdown callout format (deduplicate nested)
     6. Convert relative URLs to absolute
-    7. Convert to markdown using markdownify
+    7. Convert to markdown using CustomMarkdownify (preserves code block formatting)
     8. Post-process (fix broken words, deduplicate callouts, format callouts, clean output, remove artifacts)
     9. Add YAML frontmatter with title, date, source
     10. Save to file with preserved directory structure
@@ -1256,21 +1373,22 @@ def scrape_to_markdown(url, output_dir='output'):
         # Convert relative links to absolute
         soup = convert_relative_to_absolute_urls(soup, url)
 
-        # Convert to markdown with optimized options
-        markdown = md(
-            str(soup),
+        # Convert to markdown with custom converter that preserves code block formatting
+        converter = CustomMarkdownify(
             heading_style="ATX",
             bullets="-",
             code_language="",
             strip=['script', 'style'],
             # IMPORTANT: don't strip links or images
             escape_asterisks=False,
-            escape_underscores=False
+            escape_underscores=False,
+            # CRITICAL: preserve whitespace in <pre> tags
+            strip_pre=None  # Don't strip any whitespace from pre blocks
         )
+        markdown = converter.convert(str(soup))
 
         # Post-processing
         markdown = fix_broken_words(markdown)
-        markdown = fix_code_blocks(markdown)
         markdown = remove_unwanted_links(markdown)
         markdown = deduplicate_nested_callouts(markdown)
         markdown = format_callouts(markdown)
