@@ -1601,6 +1601,7 @@ def scrape_to_markdown(url, output_dir='output', use_path_name=False):
 title: {title}
 created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 source: {url}
+originaltitle: {title}
 ---
 
 """
