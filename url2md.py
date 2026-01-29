@@ -29,6 +29,15 @@ import requests
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md, MarkdownConverter
 
+# Configure UTF-8 encoding for Windows console
+if sys.platform == 'win32':
+    try:
+        import codecs
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
+    except Exception:
+        pass  # Silently fail if reconfiguration doesn't work
+
 
 # ============================================================
 # CUSTOM MARKDOWNIFY
@@ -510,6 +519,54 @@ def convert_callouts_to_markdown(soup):
 
                 # Replace original element
                 element.replace_with(blockquote)
+
+    return soup
+
+
+def normalize_html_whitespace(soup):
+    """
+    Normalizes whitespace in HTML text nodes to prevent word merging issues.
+
+    Replaces sequences of whitespace characters (spaces, tabs, newlines) with
+    a single space in all text nodes. This prevents issues where newlines in
+    HTML source cause words to merge when converted to markdown.
+
+    For example, HTML like:
+        <p>provisionner et
+        gérer</p>
+
+    Without normalization becomes: "provisionner et\ngérer" → "provisionner etgérer" (wrong)
+    With normalization becomes: "provisionner et gérer" (correct)
+
+    Preserves formatting in <pre> and <code> blocks.
+
+    Args:
+        soup (BeautifulSoup): Parsed HTML document
+
+    Returns:
+        BeautifulSoup: Document with normalized whitespace
+
+    Example:
+        >>> soup = BeautifulSoup('<p>word\nword</p>', 'html.parser')
+        >>> soup = normalize_html_whitespace(soup)
+        >>> soup.get_text()
+        'word word'
+    """
+    from bs4 import NavigableString
+
+    # Find all text nodes (NavigableString) that are not in <pre> or <code>
+    for element in soup.descendants:
+        if isinstance(element, NavigableString):
+            # Skip if inside <pre> or <code> tags (preserve formatting)
+            if element.find_parent(['pre', 'code']):
+                continue
+
+            # Normalize whitespace: replace any sequence of whitespace with single space
+            normalized = re.sub(r'\s+', ' ', str(element))
+
+            # Only replace if changed
+            if normalized != str(element):
+                element.replace_with(normalized)
 
     return soup
 
@@ -1527,10 +1584,11 @@ def scrape_to_markdown(url, output_dir='output', use_path_name=False):
     4. Clean HTML (remove nav, footer, ads, etc.)
     5. Convert callouts/admonitions to markdown callout format (deduplicate nested)
     6. Convert relative URLs to absolute
-    7. Convert to markdown using CustomMarkdownify (preserves code block formatting)
-    8. Post-process (fix broken words, deduplicate callouts, format callouts, clean output, remove artifacts)
-    9. Add YAML frontmatter with title, date, source
-    10. Save to file with preserved directory structure
+    7. Normalize HTML whitespace (prevent word merging from newlines)
+    8. Convert to markdown using CustomMarkdownify (preserves code block formatting)
+    9. Post-process (fix broken words, deduplicate callouts, format callouts, clean output, remove artifacts)
+    10. Add YAML frontmatter with title, date, source
+    11. Save to file with preserved directory structure
 
     Args:
         url (str): URL of page to scrape
@@ -1569,6 +1627,9 @@ def scrape_to_markdown(url, output_dir='output', use_path_name=False):
 
         # Convert relative links to absolute
         soup = convert_relative_to_absolute_urls(soup, url)
+
+        # Normalize whitespace in HTML to prevent word merging issues
+        soup = normalize_html_whitespace(soup)
 
         # Convert to markdown with custom converter that preserves code block formatting
         converter = CustomMarkdownify(
